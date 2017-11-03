@@ -102,9 +102,22 @@ namespace ShaderGen
 
         public override string VisitMemberAccessExpression(MemberAccessExpressionSyntax node)
         {
-            return Visit(node.Expression)
-                + node.OperatorToken.ToFullString()
-                + Visit(node.Name);
+            SymbolInfo exprSymbol = GetModel(node).GetSymbolInfo(node.Expression);
+            if (exprSymbol.Symbol.Kind == SymbolKind.NamedType)
+            {
+                // Static member access
+                string typeName = Utilities.GetFullMetadataName(exprSymbol.Symbol);
+                string targetName = Visit(node.Name);
+                return _backend.FormatInvocation(_setName, typeName, targetName, Array.Empty<InvocationParameterInfo>());
+            }
+            else
+            {
+                // Other accesses
+
+                return Visit(node.Expression)
+                    + node.OperatorToken.ToFullString()
+                    + Visit(node.Name);
+            }
         }
 
         public override string VisitExpressionStatement(ExpressionStatementSyntax node)
@@ -154,6 +167,26 @@ namespace ShaderGen
                         // Might need FullTypeName here too.
                         pis.Add(new InvocationParameterInfo()
                         {
+                            Identifier = identifier
+                        });
+                    }
+
+                    else if (!ims.IsStatic) // Add implicit "this" parameter.
+                    {
+                        string identifier = null;
+                        if (maes.Expression is MemberAccessExpressionSyntax subExpression)
+                        {
+                            identifier = Visit(subExpression);
+                        }
+                        else if (maes.Expression is IdentifierNameSyntax identNameSyntax)
+                        {
+                            identifier = Visit(identNameSyntax);
+                        }
+
+                        Debug.Assert(identifier != null);
+                        pis.Add(new InvocationParameterInfo
+                        {
+                            FullTypeName = containingType,
                             Identifier = identifier
                         });
                     }
@@ -216,14 +249,9 @@ namespace ShaderGen
         {
             SymbolInfo symbolInfo = GetModel(node).GetSymbolInfo(node.Type);
             string fullName = Utilities.GetFullName(symbolInfo);
-
-            if (!Utilities.IsBasicNumericType(fullName))
-            {
-                throw new ShaderGenerationException(
-                    "Constructors can only be called on basic numeric types.");
-            }
-
-            return _backend.CSharpToShaderType(fullName) + "(" + Visit(node.ArgumentList) + ")";
+             
+            InvocationParameterInfo[] parameters = GetParameterInfos(node.ArgumentList);
+            return _backend.FormatInvocation(_setName, fullName, "ctor", parameters);
         }
 
         public override string VisitIdentifierName(IdentifierNameSyntax node)
