@@ -35,9 +35,16 @@ namespace ShaderGen
         {
             _containingTypeName = Utilities.GetFullNestedTypePrefix(node, out bool _);
             StringBuilder sb = new StringBuilder();
+            string blockResult = VisitBlock(node); // Visit block first in order to discover builtin variables.
             string functionDeclStr = GetFunctionDeclStr();
+
+            if (_shaderFunction.Type == ShaderFunctionType.ComputeEntryPoint)
+            {
+                sb.AppendLine(_backend.GetComputeGroupCountsDeclaration(_shaderFunction.ComputeGroupCounts));
+            }
+
             sb.AppendLine(functionDeclStr);
-            sb.AppendLine(VisitBlock(node));
+            sb.AppendLine(blockResult);
             return sb.ToString();
         }
 
@@ -106,6 +113,13 @@ namespace ShaderGen
             if (exprSymbol.Symbol.Kind == SymbolKind.NamedType)
             {
                 // Static member access
+                SymbolInfo symbolInfo = GetModel(node).GetSymbolInfo(node);
+                ISymbol symbol = symbolInfo.Symbol;
+                if (symbol.Kind == SymbolKind.Property)
+                {
+                    return Visit(node.Name);
+                }
+
                 string typeName = Utilities.GetFullMetadataName(exprSymbol.Symbol);
                 string targetName = Visit(node.Name);
                 return _backend.FormatInvocation(_setName, typeName, targetName, Array.Empty<InvocationParameterInfo>());
@@ -113,10 +127,21 @@ namespace ShaderGen
             else
             {
                 // Other accesses
+                bool isIndexerAccess = _backend.IsIndexerAccess(GetModel(node).GetSymbolInfo(node.Name));
+                string expr = Visit(node.Expression);
+                string name = Visit(node.Name);
 
-                return Visit(node.Expression)
-                    + node.OperatorToken.ToFullString()
-                    + Visit(node.Name);
+                if (!isIndexerAccess)
+                {
+                    return Visit(node.Expression)
+                        + node.OperatorToken.ToFullString()
+                        + Visit(node.Name);
+                }
+                else
+                {
+                    return Visit(node.Expression)
+                        + Visit(node.Name);
+                }
             }
         }
 
@@ -152,16 +177,7 @@ namespace ShaderGen
                     List<InvocationParameterInfo> pis = new List<InvocationParameterInfo>();
                     if (ims.IsExtensionMethod)
                     {
-                        string identifier = null;
-                        // Extension method invocation, ie: swizzle:
-                        if (maes.Expression is MemberAccessExpressionSyntax subExpression)
-                        {
-                            identifier = Visit(subExpression);
-                        }
-                        else if (maes.Expression is IdentifierNameSyntax identNameSyntax)
-                        {
-                            identifier = Visit(identNameSyntax);
-                        }
+                        string identifier = Visit(maes.Expression);
 
                         Debug.Assert(identifier != null);
                         // Might need FullTypeName here too.
@@ -249,7 +265,7 @@ namespace ShaderGen
         {
             SymbolInfo symbolInfo = GetModel(node).GetSymbolInfo(node.Type);
             string fullName = Utilities.GetFullName(symbolInfo);
-             
+
             InvocationParameterInfo[] parameters = GetParameterInfos(node.ArgumentList);
             return _backend.FormatInvocation(_setName, fullName, "ctor", parameters);
         }
@@ -259,12 +275,62 @@ namespace ShaderGen
             SymbolInfo symbolInfo = GetModel(node).GetSymbolInfo(node);
             ISymbol symbol = symbolInfo.Symbol;
             string containingTypeName = Utilities.GetFullName(symbolInfo.Symbol.ContainingType);
+            if (containingTypeName == "ShaderGen.ShaderBuiltins")
+            {
+                TryRecognizeBuiltInVariable(symbolInfo);
+            }
             if (symbol.Kind == SymbolKind.Field && containingTypeName == _containingTypeName)
             {
                 return _backend.CorrectFieldAccess(symbolInfo);
             }
+            else if (symbol.Kind == SymbolKind.Property)
+            {
+                return _backend.FormatInvocation(_setName, containingTypeName, symbol.Name, Array.Empty<InvocationParameterInfo>());
+            }
+
             string mapped = _backend.CSharpToShaderIdentifierName(symbolInfo);
             return _backend.CorrectIdentifier(mapped);
+        }
+
+        private void TryRecognizeBuiltInVariable(SymbolInfo symbolInfo)
+        {
+            string name = symbolInfo.Symbol.Name;
+            if (name == nameof(ShaderBuiltins.VertexID))
+            {
+                if (_shaderFunction.Type != ShaderFunctionType.VertexEntryPoint)
+                {
+                    throw new ShaderGenerationException("VertexID can only be used within Vertex shaders.");
+                }
+                _shaderFunction.UsesVertexID = true;
+            }
+            else if (name == nameof(ShaderBuiltins.InstanceID))
+            {
+                _shaderFunction.UsesInstanceID = true;
+            }
+            else if (name == nameof(ShaderBuiltins.DispatchThreadID))
+            {
+                if (_shaderFunction.Type != ShaderFunctionType.ComputeEntryPoint)
+                {
+                    throw new ShaderGenerationException("DispatchThreadID can only be used within Vertex shaders.");
+                }
+                _shaderFunction.UsesDispatchThreadID = true;
+            }
+            else if (name == nameof(ShaderBuiltins.GroupThreadID))
+            {
+                if (_shaderFunction.Type != ShaderFunctionType.ComputeEntryPoint)
+                {
+                    throw new ShaderGenerationException("GroupThreadID can only be used within Vertex shaders.");
+                }
+                _shaderFunction.UsesGroupThreadID = true;
+            }
+            else if (name == nameof(ShaderBuiltins.IsFrontFace))
+            {
+                if (_shaderFunction.Type != ShaderFunctionType.FragmentEntryPoint)
+                {
+                    throw new ShaderGenerationException("IsFrontFace can only be used within Fragment shaders.");
+                }
+                _shaderFunction.UsesFrontFace = true;
+            }
         }
 
         public override string VisitLiteralExpression(LiteralExpressionSyntax node)

@@ -1,10 +1,7 @@
 ﻿using Microsoft.CodeAnalysis;
-using System;
 using System.Text;
 using System.Collections.Generic;
 using System.Linq;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using System.IO;
 using System.Diagnostics;
 
 namespace ShaderGen
@@ -12,6 +9,7 @@ namespace ShaderGen
     public abstract class GlslBackendBase : LanguageBackend
     {
         protected readonly HashSet<string> _uniformNames = new HashSet<string>();
+        protected readonly HashSet<string> _ssboNames = new HashSet<string>();
 
         public GlslBackendBase(Compilation compilation) : base(compilation)
         {
@@ -56,9 +54,7 @@ namespace ShaderGen
 
             ValidateRequiredSemantics(setName, entryPoint.Function, function.Type);
 
-            StructureDefinition input = GetRequiredStructureType(setName, entryPoint.Function.Parameters[0].Type);
-
-            WriteVersionHeader(sb);
+            WriteVersionHeader(function, sb);
 
             StructureDefinition[] orderedStructures
                 = StructureDependencyGraph.GetOrderedStructureList(Compilation, context.Structures);
@@ -81,8 +77,15 @@ namespace ShaderGen
                     case ShaderResourceKind.TextureCube:
                         WriteTextureCube(sb, rd);
                         break;
+                    case ShaderResourceKind.Texture2DMS:
+                        WriteTexture2DMS(sb, rd);
+                        break;
                     case ShaderResourceKind.Sampler:
                         WriteSampler(sb, rd);
+                        break;
+                    case ShaderResourceKind.StructuredBuffer:
+                    case ShaderResourceKind.RWStructuredBuffer:
+                        WriteStructuredBuffer(sb, rd, rd.ResourceKind == ShaderResourceKind.StructuredBuffer);
                         break;
                     default: throw new ShaderGenerationException("Illegal resource kind: " + rd.ResourceKind);
                 }
@@ -115,33 +118,44 @@ namespace ShaderGen
 
         private void WriteMainFunction(string setName, StringBuilder sb, ShaderFunction entryFunction)
         {
-            ParameterDefinition input = entryFunction.Parameters[0];
-            StructureDefinition inputType = GetRequiredStructureType(setName, input.Type);
-            StructureDefinition outputType = entryFunction.Type == ShaderFunctionType.VertexEntryPoint
-                ? GetRequiredStructureType(setName, entryFunction.ReturnType)
-                : null; // Hacky but meh
+            ParameterDefinition input = entryFunction.Parameters.Length > 0
+                ? entryFunction.Parameters[0]
+                : null;
+            StructureDefinition inputType = input != null
+                ? GetRequiredStructureType(setName, input.Type)
+                : null;
+            StructureDefinition outputType =
+                entryFunction.ReturnType.Name != "System.Numerics.Vector4"
+                && entryFunction.ReturnType.Name != "System.Void"
+                    ? GetRequiredStructureType(setName, entryFunction.ReturnType)
+                    : null;
 
-            // Declare "in" variables
-            int inVarIndex = 0;
             string fragCoordName = null;
-            foreach (FieldDefinition field in inputType.Fields)
+
+            if (inputType != null)
             {
-                if (entryFunction.Type == ShaderFunctionType.FragmentEntryPoint
-                    && fragCoordName == null
-                    && field.SemanticType == SemanticType.Position)
+                // Declare "in" variables
+                int inVarIndex = 0;
+                fragCoordName = null;
+                foreach (FieldDefinition field in inputType.Fields)
                 {
-                    fragCoordName = field.Name;
-                }
-                else
-                {
-                    WriteInOutVariable(
-                        sb,
-                        true,
-                        entryFunction.Type == ShaderFunctionType.VertexEntryPoint,
-                        CSharpToShaderType(field.Type.Name),
-                        CorrectIdentifier(field.Name),
-                        inVarIndex);
-                    inVarIndex += 1;
+                    if (entryFunction.Type == ShaderFunctionType.FragmentEntryPoint
+                        && fragCoordName == null
+                        && field.SemanticType == SemanticType.SystemPosition)
+                    {
+                        fragCoordName = field.Name;
+                    }
+                    else
+                    {
+                        WriteInOutVariable(
+                            sb,
+                            true,
+                            entryFunction.Type == ShaderFunctionType.VertexEntryPoint,
+                            CSharpToShaderType(field.Type.Name),
+                            CorrectIdentifier(field.Name),
+                            inVarIndex);
+                        inVarIndex += 1;
+                    }
                 }
             }
 
@@ -150,13 +164,11 @@ namespace ShaderGen
             // Declare "out" variables
             if (entryFunction.Type == ShaderFunctionType.VertexEntryPoint)
             {
-                bool skippedFirstPositionSemantic = false;
                 int outVarIndex = 0;
                 foreach (FieldDefinition field in outputType.Fields)
                 {
-                    if (field.SemanticType == SemanticType.Position && !skippedFirstPositionSemantic)
+                    if (field.SemanticType == SemanticType.SystemPosition)
                     {
-                        skippedFirstPositionSemantic = true;
                         continue;
                     }
                     else
@@ -174,70 +186,84 @@ namespace ShaderGen
             }
             else
             {
-                Debug.Assert(entryFunction.Type == ShaderFunctionType.FragmentEntryPoint);
-                if (mappedReturnType != "vec4" && mappedReturnType != "void")
-                {
-                    throw new ShaderGenerationException("Fragment shader must return a System.Numerics.Vector4 value, or no value.");
-                }
+                Debug.Assert(entryFunction.Type == ShaderFunctionType.FragmentEntryPoint
+                    || entryFunction.Type == ShaderFunctionType.ComputeEntryPoint);
 
                 if (mappedReturnType == "vec4")
                 {
                     WriteInOutVariable(sb, false, false, "vec4", "_outputColor_", 0);
                 }
+                else if (mappedReturnType != "void")
+                {
+                    // Composite struct -- declare an out variable for each.
+                    int colorTargetIndex = 0;
+                    foreach (FieldDefinition field in outputType.Fields)
+                    {
+                        Debug.Assert(field.SemanticType == SemanticType.ColorTarget);
+                        Debug.Assert(field.Type.Name == "System.Numerics.Vector4");
+                        int index = colorTargetIndex++;
+                        sb.AppendLine($"    layout(location = {index}) out vec4 _outputColor_{index};");
+                    }
+                }
             }
 
             sb.AppendLine();
 
-            string inTypeName = CSharpToShaderType(inputType.Name);
-
             sb.AppendLine($"void main()");
             sb.AppendLine("{");
-            sb.AppendLine($"    {inTypeName} {CorrectIdentifier("input")};");
-
-            // Assign synthetic "in" variables (with real field name) to structure passed to actual function.
-            int inoutIndex = 0;
-            bool foundSystemPosition = false;
-            foreach (FieldDefinition field in inputType.Fields)
+            if (inputType != null)
             {
-                if (entryFunction.Type == ShaderFunctionType.VertexEntryPoint)
+                string inTypeName = CSharpToShaderType(inputType.Name);
+                sb.AppendLine($"    {inTypeName} {CorrectIdentifier("input")};");
+
+                // Assign synthetic "in" variables (with real field name) to structure passed to actual function.
+                int inoutIndex = 0;
+                bool foundSystemPosition = false;
+                foreach (FieldDefinition field in inputType.Fields)
                 {
-                    sb.AppendLine($"    {CorrectIdentifier("input")}.{CorrectIdentifier(field.Name)} = {CorrectIdentifier(field.Name)};");
-                }
-                else
-                {
-                    if (field.SemanticType == SemanticType.Position && !foundSystemPosition)
+                    if (entryFunction.Type == ShaderFunctionType.VertexEntryPoint)
                     {
-                        Debug.Assert(field.Name == fragCoordName);
-                        foundSystemPosition = true;
-                        sb.AppendLine($"    {CorrectIdentifier("input")}.{CorrectIdentifier(field.Name)} = gl_FragCoord;");
+                        sb.AppendLine($"    {CorrectIdentifier("input")}.{CorrectIdentifier(field.Name)} = {CorrectIdentifier(field.Name)};");
                     }
                     else
                     {
-                        sb.AppendLine($"    {CorrectIdentifier("input")}.{CorrectIdentifier(field.Name)} = fsin_{inoutIndex++};");
+                        if (field.SemanticType == SemanticType.SystemPosition && !foundSystemPosition)
+                        {
+                            Debug.Assert(field.Name == fragCoordName);
+                            foundSystemPosition = true;
+                            sb.AppendLine($"    {CorrectIdentifier("input")}.{CorrectIdentifier(field.Name)} = gl_FragCoord;");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"    {CorrectIdentifier("input")}.{CorrectIdentifier(field.Name)} = fsin_{inoutIndex++};");
+                        }
                     }
                 }
             }
 
             // Call actual function.
+            string invocationStr = inputType != null
+                ? $"{entryFunction.Name}({CorrectIdentifier("input")})"
+                : $"{entryFunction.Name}()";
             if (mappedReturnType != "void")
             {
-                sb.AppendLine($"    {mappedReturnType} {CorrectIdentifier("output")} = {entryFunction.Name}({CorrectIdentifier("input")});");
+                sb.AppendLine($"    {mappedReturnType} {CorrectIdentifier("output")} = {invocationStr};");
             }
             else
             {
-                sb.Append($"    {entryFunction.Name}({CorrectIdentifier("input")});");
+                sb.AppendLine($"    {invocationStr};");
             }
 
             // Assign output fields to synthetic "out" variables with normalized "fsin_#" names.
             if (entryFunction.Type == ShaderFunctionType.VertexEntryPoint)
             {
-                inoutIndex = 0;
-                FieldDefinition positionSemanticField = null;
+                int inoutIndex = 0;
+                FieldDefinition systemPositionField = null;
                 foreach (FieldDefinition field in outputType.Fields)
                 {
-                    if (positionSemanticField == null && field.SemanticType == SemanticType.Position)
+                    if (systemPositionField == null && field.SemanticType == SemanticType.SystemPosition)
                     {
-                        positionSemanticField = field;
+                        systemPositionField = field;
                     }
                     else
                     {
@@ -245,21 +271,30 @@ namespace ShaderGen
                     }
                 }
 
-                if (positionSemanticField == null)
+                if (systemPositionField == null)
                 {
                     // TODO: Should be caught earlier.
-                    throw new ShaderGenerationException("At least one vertex output must have a position semantic.");
+                    throw new ShaderGenerationException("Vertex functions must output a SystemPosition semantic.");
                 }
 
-                sb.AppendLine($"    gl_Position = {CorrectIdentifier("output")}.{CorrectIdentifier(positionSemanticField.Name)};");
+                sb.AppendLine($"    gl_Position = {CorrectIdentifier("output")}.{CorrectIdentifier(systemPositionField.Name)};");
                 EmitGlPositionCorrection(sb);
             }
-            else
+            else if (entryFunction.Type == ShaderFunctionType.FragmentEntryPoint)
             {
-                Debug.Assert(entryFunction.Type == ShaderFunctionType.FragmentEntryPoint);
                 if (mappedReturnType == "vec4")
                 {
                     sb.AppendLine($"    _outputColor_ = {CorrectIdentifier("output")};");
+                }
+                else if (mappedReturnType != "void")
+                {
+                    // Composite struct -- assign each field to output
+                    int colorTargetIndex = 0;
+                    foreach (FieldDefinition field in outputType.Fields)
+                    {
+                        Debug.Assert(field.SemanticType == SemanticType.ColorTarget);
+                        sb.AppendLine($"    _outputColor_{colorTargetIndex++} = {CorrectIdentifier("output")}.{CorrectIdentifier(field.Name)};");
+                    }
                 }
             }
             sb.AppendLine("}");
@@ -286,6 +321,11 @@ namespace ShaderGen
             {
                 _uniformNames.Add(rd.Name);
             }
+            if (rd.ResourceKind == ShaderResourceKind.StructuredBuffer
+                || rd.ResourceKind == ShaderResourceKind.RWStructuredBuffer)
+            {
+                _ssboNames.Add(rd.Name);
+            }
 
             base.AddResource(setName, rd);
         }
@@ -295,7 +335,7 @@ namespace ShaderGen
             string originalName = symbolInfo.Symbol.Name;
             string mapped = CSharpToShaderIdentifierName(symbolInfo);
             string identifier = CorrectIdentifier(mapped);
-            if (_uniformNames.Contains(originalName))
+            if (_uniformNames.Contains(originalName) || _ssboNames.Contains(originalName))
             {
                 return "field_" + identifier;
             }
@@ -305,16 +345,24 @@ namespace ShaderGen
             }
         }
 
+        internal override string GetComputeGroupCountsDeclaration(UInt3 groupCounts)
+        {
+            return $"layout(local_size_x = {groupCounts.X}, local_size_y = {groupCounts.Y}, local_size_z = {groupCounts.Z}) in;";
+        }
+
         private static readonly HashSet<string> s_glslKeywords = new HashSet<string>()
         {
             "input", "output",
         };
 
-        protected abstract void WriteVersionHeader(StringBuilder sb);
+        protected abstract void WriteVersionHeader(ShaderFunction function, StringBuilder sb);
         protected abstract void WriteUniform(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteSampler(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteTexture2D(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteTextureCube(StringBuilder sb, ResourceDefinition rd);
+        protected abstract void WriteTexture2DMS(StringBuilder sb, ResourceDefinition rd);
+        protected abstract void WriteStructuredBuffer(StringBuilder sb, ResourceDefinition rd, bool isReadOnly);
+
         protected abstract void WriteInOutVariable(
             StringBuilder sb,
             bool isInVar,

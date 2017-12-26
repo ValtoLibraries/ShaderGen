@@ -24,10 +24,21 @@ namespace ShaderGen.Tests
             yield return new object[] { "TestShaders.CustomMethodCalls.VS", null };
             yield return new object[] { "TestShaders.VeldridShaders.ShadowDepth.VS", "TestShaders.VeldridShaders.ShadowDepth.FS" };
             yield return new object[] { "TestShaders.ShaderBuiltinsTestShader.VS", null };
+            yield return new object[] { null, "TestShaders.ShaderBuiltinsTestShader.FS" };
             yield return new object[] { "TestShaders.VectorConstructors.VS", null };
             yield return new object[] { "TestShaders.VectorStaticProperties.VS", null };
             yield return new object[] { "TestShaders.VectorStaticFunctions.VS", null };
             yield return new object[] { "TestShaders.MultipleResourceSets.VS", null };
+            yield return new object[] { "TestShaders.MultipleColorOutputs.VS", "TestShaders.MultipleColorOutputs.FS" };
+            yield return new object[] { "TestShaders.MultisampleTexture.VS", null };
+            yield return new object[] { "TestShaders.BuiltInVariables.VS", null };
+            yield return new object[] { "TestShaders.MathFunctions.VS", null };
+            yield return new object[] { "TestShaders.Matrix4x4Members.VS", null };
+        }
+
+        private static IEnumerable<object[]> ComputeShaders()
+        {
+            yield return new object[] { "TestShaders.SimpleCompute.CS" };
         }
 
         [Theory]
@@ -169,7 +180,18 @@ namespace ShaderGen.Tests
                             GlsLangValidatorTool.AssertCompilesCode(set.FragmentShaderCode, "frag", is450);
                         }
                     }
-
+                    if (set.ComputeFunction != null)
+                    {
+                        if (backend is HlslBackend)
+                        {
+                            FxcTool.AssertCompilesCode(set.ComputeShaderCode, "cs_5_0", set.ComputeFunction.Name);
+                        }
+                        else
+                        {
+                            bool is450 = backend is Glsl450Backend;
+                            GlsLangValidatorTool.AssertCompilesCode(set.ComputeShaderCode, "comp", is450);
+                        }
+                    }
                 }
             }
         }

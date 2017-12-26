@@ -46,6 +46,12 @@ namespace ShaderGen.App
                 syntax.DefineOption("processorargs", ref processorArgs, false, "Custom information passed to IShaderSetProcessor.");
             });
 
+            referenceItemsResponsePath = NormalizePath(referenceItemsResponsePath);
+            compileItemsResponsePath = NormalizePath(compileItemsResponsePath);
+            outputPath = NormalizePath(outputPath);
+            genListFilePath = NormalizePath(genListFilePath);
+            processorPath = NormalizePath(processorPath);
+
             if (!File.Exists(referenceItemsResponsePath))
             {
                 Console.Error.WriteLine("Reference items response file does not exist: " + referenceItemsResponsePath);
@@ -64,7 +70,7 @@ namespace ShaderGen.App
                 }
                 catch
                 {
-                    Console.Error.WriteLine("Unable to create the output directory.");
+                    Console.Error.WriteLine($"Unable to create the output directory \"{outputPath}\".");
                     return -1;
                 }
             }
@@ -172,7 +178,12 @@ namespace ShaderGen.App
                         string vsOutName = name + "-vertex." + extension;
                         string vsOutPath = Path.Combine(outputPath, vsOutName);
                         File.WriteAllText(vsOutPath, set.VertexShaderCode, outputEncoding);
-                        bool succeeded = CompileCode(lang, vsOutPath, set.VertexFunction.Name, true, out string genPath);
+                        bool succeeded = CompileCode(
+                            lang,
+                            vsOutPath,
+                            set.VertexFunction.Name,
+                            ShaderFunctionType.VertexEntryPoint,
+                            out string genPath);
                         if (succeeded)
                         {
                             generatedFilePaths.Add(genPath);
@@ -187,7 +198,12 @@ namespace ShaderGen.App
                         string fsOutName = name + "-fragment." + extension;
                         string fsOutPath = Path.Combine(outputPath, fsOutName);
                         File.WriteAllText(fsOutPath, set.FragmentShaderCode, outputEncoding);
-                        bool succeeded = CompileCode(lang, fsOutPath, set.FragmentFunction.Name, false, out string genPath);
+                        bool succeeded = CompileCode(
+                            lang,
+                            fsOutPath,
+                            set.FragmentFunction.Name,
+                            ShaderFunctionType.FragmentEntryPoint,
+                            out string genPath);
                         if (succeeded)
                         {
                             generatedFilePaths.Add(genPath);
@@ -195,6 +211,26 @@ namespace ShaderGen.App
                         if (!succeeded || listAllFiles)
                         {
                             generatedFilePaths.Add(fsOutPath);
+                        }
+                    }
+                    if (set.ComputeShaderCode != null)
+                    {
+                        string csOutName = name + "-compute." + extension;
+                        string csOutPath = Path.Combine(outputPath, csOutName);
+                        File.WriteAllText(csOutPath, set.ComputeShaderCode, outputEncoding);
+                        bool succeeded = CompileCode(
+                            lang,
+                            csOutPath,
+                            set.ComputeFunction.Name,
+                            ShaderFunctionType.ComputeEntryPoint,
+                            out string genPath);
+                        if (succeeded)
+                        {
+                            generatedFilePaths.Add(genPath);
+                        }
+                        if (!succeeded || listAllFiles)
+                        {
+                            generatedFilePaths.Add(csOutPath);
                         }
                     }
                 }
@@ -205,16 +241,28 @@ namespace ShaderGen.App
             return 0;
         }
 
-        private static bool CompileCode(LanguageBackend lang, string shaderPath, string entryPoint, bool isVertex, out string path)
+        private static string NormalizePath(string path)
+        {
+            if (path == null)
+            {
+                return null;
+            }
+            else
+            {
+                return path.Trim();
+            }
+        }
+
+        private static bool CompileCode(LanguageBackend lang, string shaderPath, string entryPoint, ShaderFunctionType type, out string path)
         {
             Type langType = lang.GetType();
             if (langType == typeof(HlslBackend) && IsFxcAvailable())
             {
-                return CompileHlsl(shaderPath, entryPoint, isVertex, out path);
+                return CompileHlsl(shaderPath, entryPoint, type, out path);
             }
             else if (langType == typeof(Glsl450Backend) && IsGlslangValidatorAvailable())
             {
-                return CompileSpirv(shaderPath, entryPoint, isVertex, out path);
+                return CompileSpirv(shaderPath, entryPoint, type, out path);
             }
             else
             {
@@ -223,27 +271,34 @@ namespace ShaderGen.App
             }
         }
 
-        private static bool CompileHlsl(string shaderPath, string entryPoint, bool isVertex, out string path)
+        private static bool CompileHlsl(string shaderPath, string entryPoint, ShaderFunctionType type, out string path)
         {
             try
             {
+                string profile = type == ShaderFunctionType.VertexEntryPoint ? "vs_5_0"
+                    : type == ShaderFunctionType.FragmentEntryPoint ? "ps_5_0"
+                    : "cs_5_0";
                 string outputPath = shaderPath + ".bytes";
-                string args = $"/T {(isVertex ? "vs_5_0" : "ps_5_0")} /E {entryPoint} {shaderPath} /Fo {outputPath}";
+                string args = $"/T {profile} /E {entryPoint} {shaderPath} /Fo {outputPath}";
                 string fxcPath = FindFxcExe();
                 ProcessStartInfo psi = new ProcessStartInfo(fxcPath, args);
                 psi.RedirectStandardOutput = true;
                 psi.RedirectStandardError = true;
-                Process p = Process.Start(psi);
-                p.WaitForExit();
+                Process p = new Process() { StartInfo = psi };
+                p.Start();
+                var stdOut = p.StandardOutput.ReadToEndAsync();
+                var stdErr = p.StandardError.ReadToEndAsync();
+                bool exited = p.WaitForExit(2000);
 
-                if (p.ExitCode == 0)
+                if (exited && p.ExitCode == 0)
                 {
                     path = outputPath;
                     return true;
                 }
                 else
                 {
-                    throw new ShaderGenerationException(p.StandardError.ReadToEnd());
+                    string message = $"StdOut: {stdOut.Result}, StdErr: {stdErr.Result}";
+                    Console.WriteLine($"Failed to compile HLSL: {message}.");
                 }
             }
             catch (Win32Exception)
@@ -255,10 +310,13 @@ namespace ShaderGen.App
             return false;
         }
 
-        private static bool CompileSpirv(string shaderPath, string entryPoint, bool isVertex, out string path)
+        private static bool CompileSpirv(string shaderPath, string entryPoint, ShaderFunctionType type, out string path)
         {
+            string stage = type == ShaderFunctionType.VertexEntryPoint ? "vert"
+                : type == ShaderFunctionType.FragmentEntryPoint ? "frag"
+                : "comp";
             string outputPath = shaderPath + ".spv";
-            string args = $"-V -S {(isVertex ? "vert" : "frag")} {shaderPath} -o {outputPath}";
+            string args = $"-V -S {stage} {shaderPath} -o {outputPath}";
             try
             {
 

@@ -5,6 +5,9 @@
         Uniform,
         Texture2D,
         TextureCube,
+        Texture2DMS,
         Sampler,
+        StructuredBuffer,
+        RWStructuredBuffer,
     }
 }

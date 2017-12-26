@@ -47,11 +47,16 @@ namespace ShaderGen
             return ret;
         }
 
+
         internal ShaderModel GetShaderModel(string setName)
         {
             BackendContext context = GetContext(setName);
 
-            foreach (ResourceDefinition rd in context.Resources.Where(rd => rd.ResourceKind == ShaderResourceKind.Uniform))
+            foreach (ResourceDefinition rd in context.Resources
+                .Where(rd => 
+                    rd.ResourceKind == ShaderResourceKind.Uniform 
+                    || rd.ResourceKind == ShaderResourceKind.RWStructuredBuffer
+                    || rd.ResourceKind == ShaderResourceKind.StructuredBuffer))
             {
                 ForceTypeDiscovery(setName, rd.ValueType);
             }
@@ -139,6 +144,13 @@ namespace ShaderGen
             {
                 structures.Add(sd);
             }
+        }
+
+        internal virtual bool IsIndexerAccess(SymbolInfo member)
+        {
+            return Utilities.GetFullMetadataName(member.Symbol.ContainingType) == "System.Numerics.Matrix4x4"
+                && member.Symbol.Name[0] == 'M'
+                && char.IsDigit(member.Symbol.Name[1]);
         }
 
         internal virtual void AddResource(string setName, ResourceDefinition rd)
@@ -266,6 +278,7 @@ namespace ShaderGen
         protected abstract string CSharpToIdentifierNameCore(string typeName, string identifier);
         protected abstract string GenerateFullTextCore(string setName, ShaderFunction function);
         protected abstract string FormatInvocationCore(string setName, string type, string method, InvocationParameterInfo[] parameterInfos);
+        internal abstract string GetComputeGroupCountsDeclaration(UInt3 groupCounts);
 
         internal string CorrectLiteral(string literal)
         {
