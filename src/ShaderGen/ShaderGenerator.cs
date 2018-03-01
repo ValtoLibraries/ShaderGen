@@ -140,11 +140,6 @@ namespace ShaderGen
 
         public ShaderGenerationResult GenerateShaders()
         {
-            if (_shaderSets.Count == 0)
-            {
-                throw new ShaderGenerationException("No shader sets were discovered.");
-            }
-
             ShaderGenerationResult result = new ShaderGenerationResult();
             foreach (ShaderSetInfo ss in _shaderSets)
             {
@@ -217,15 +212,15 @@ namespace ShaderGen
                 string csCode = null;
                 if (vsFunc != null)
                 {
-                    vsCode = language.GetCode(ss.Name, vsFunc);
+                    vsCode = language.ProcessEntryFunction(ss.Name, vsFunc).FullText;
                 }
                 if (fsFunc != null)
                 {
-                    fsCode = language.GetCode(ss.Name, fsFunc);
+                    fsCode = language.ProcessEntryFunction(ss.Name, fsFunc).FullText;
                 }
                 if (csFunc != null)
                 {
-                    csCode = language.GetCode(ss.Name, csFunc);
+                    csCode = language.ProcessEntryFunction(ss.Name, csFunc).FullText;
                 }
 
                 result.AddShaderSet(

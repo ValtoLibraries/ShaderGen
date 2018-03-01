@@ -4,7 +4,6 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Text;
 
@@ -12,12 +11,12 @@ namespace ShaderGen
 {
     internal static class Utilities
     {
-        public static string GetFullTypeName(this SemanticModel model, TypeSyntax type)
+        public static string GetFullTypeName(this SemanticModel model, ExpressionSyntax type)
         {
             bool _; return GetFullTypeName(model, type, out _);
         }
 
-        public static string GetFullTypeName(this SemanticModel model, TypeSyntax type, out bool isArray)
+        public static string GetFullTypeName(this SemanticModel model, ExpressionSyntax type, out bool isArray)
         {
             if (model == null)
             {
@@ -45,7 +44,7 @@ namespace ShaderGen
             return GetFullTypeName(typeInfo.Type, out isArray);
         }
 
-        private static string GetFullTypeName(ITypeSymbol type, out bool isArray)
+        public static string GetFullTypeName(ITypeSymbol type, out bool isArray)
         {
             if (type is IArrayTypeSymbol ats)
             {
@@ -210,6 +209,11 @@ namespace ShaderGen
             }
 
             return fullName;
+        }
+
+        internal static string JoinIgnoreNull(string separator, IEnumerable<string> value)
+        {
+            return string.Join(separator, value.Where(s => !string.IsNullOrEmpty(s)));
         }
     }
 }

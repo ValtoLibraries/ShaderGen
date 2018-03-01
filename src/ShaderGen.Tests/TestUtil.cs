@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis.Text;
 using System.Runtime.InteropServices;
+using ShaderGen.Glsl;
+using ShaderGen.Hlsl;
 
 namespace ShaderGen.Tests
 {
@@ -101,6 +103,10 @@ namespace ShaderGen.Tests
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 dirs.Add(@"C:\Program Files\dotnet\sdk\NuGetFallbackFolder");
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                dirs.Add("/usr/local/share/dotnet/sdk/NuGetFallbackFolder");
             }
             else
             {

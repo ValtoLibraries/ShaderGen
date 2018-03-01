@@ -1,8 +1,8 @@
 ﻿using System.Collections.Generic;
 
-namespace ShaderGen
+namespace ShaderGen.Metal
 {
-    public static class HlslKnownIdentifiers
+    public static class MetalKnownIdentifiers
     {
         private static Dictionary<string, Dictionary<string, string>> s_mappings = GetMappings();
 
@@ -12,25 +12,25 @@ namespace ShaderGen
 
             Dictionary<string, string> v2Mappings = new Dictionary<string, string>()
             {
-                { "X", "x" },
-                { "Y", "y" },
+                { "X", "[0]" },
+                { "Y", "[1]" },
             };
             ret.Add("System.Numerics.Vector2", v2Mappings);
 
             Dictionary<string, string> v3Mappings = new Dictionary<string, string>()
             {
-                { "X", "x" },
-                { "Y", "y" },
-                { "Z", "z" },
+                { "X", "[0]" },
+                { "Y", "[1]" },
+                { "Z", "[2]" },
             };
             ret.Add("System.Numerics.Vector3", v3Mappings);
 
             Dictionary<string, string> v4Mappings = new Dictionary<string, string>()
             {
-                { "X", "x" },
-                { "Y", "y" },
-                { "Z", "z" },
-                { "W", "w" },
+                { "X", "[0]" },
+                { "Y", "[1]" },
+                { "Z", "[2]" },
+                { "W", "[3]" },
             };
             ret.Add("System.Numerics.Vector4", v4Mappings);
 
@@ -55,13 +55,53 @@ namespace ShaderGen
             };
             ret.Add("System.Numerics.Matrix4x4", m4x4Mappings);
 
+            Dictionary<string, string> uint2Mappings = new Dictionary<string, string>()
+            {
+                { "X", "[0]" },
+                { "Y", "[1]" },
+            };
+            ret.Add("ShaderGen.UInt2", uint2Mappings);
+
             Dictionary<string, string> uint3Mappings = new Dictionary<string, string>()
             {
-                { "X", "x" },
-                { "Y", "y" },
-                { "Z", "z" },
+                { "X", "[0]" },
+                { "Y", "[1]" },
+                { "Z", "[2]" },
             };
             ret.Add("ShaderGen.UInt3", uint3Mappings);
+
+            Dictionary<string, string> uint4Mappings = new Dictionary<string, string>()
+            {
+                { "X", "[0]" },
+                { "Y", "[1]" },
+                { "Z", "[2]" },
+                { "W", "[3]" },
+            };
+            ret.Add("ShaderGen.UInt4", uint4Mappings);
+
+            Dictionary<string, string> int2Mappings = new Dictionary<string, string>()
+            {
+                { "X", "[0]" },
+                { "Y", "[1]" },
+            };
+            ret.Add("ShaderGen.Int2", int2Mappings);
+
+            Dictionary<string, string> int3Mappings = new Dictionary<string, string>()
+            {
+                { "X", "[0]" },
+                { "Y", "[1]" },
+                { "Z", "[2]" },
+            };
+            ret.Add("ShaderGen.Int3", int3Mappings);
+
+            Dictionary<string, string> int4Mappings = new Dictionary<string, string>()
+            {
+                { "X", "[0]" },
+                { "Y", "[1]" },
+                { "Z", "[2]" },
+                { "W", "[3]" },
+            };
+            ret.Add("ShaderGen.Int4", int4Mappings);
 
             return ret;
         }

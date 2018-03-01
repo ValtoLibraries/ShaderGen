@@ -1,10 +1,11 @@
-﻿using System.Linq;
+using System.Diagnostics;
+using System.Linq;
 using System.Text;
 using ShaderGen.Hlsl;
 
-namespace ShaderGen
+namespace ShaderGen.Metal
 {
-    internal class SwizzleTranslator : TypeInvocationTranslator
+    internal class MetalSwizzleTranslator : TypeInvocationTranslator
     {
         private readonly InvocationTranslator _translator = TranslateCore;
 
@@ -33,7 +34,10 @@ namespace ShaderGen
                 swizzle.Append(char.ToLowerInvariant(c));
             }
 
-            return $"{target}.{swizzle.ToString()}";
+            bool result = MetalKnownTypes.GetUnpackedType(parameters[0].FullTypeName, out string unpackedType);
+            Debug.Assert(result);
+
+            return $"{unpackedType}({target}).{swizzle.ToString()}";
         }
     }
 }

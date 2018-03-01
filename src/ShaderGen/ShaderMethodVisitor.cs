@@ -16,6 +16,7 @@ namespace ShaderGen
         protected readonly LanguageBackend _backend;
         protected readonly ShaderFunction _shaderFunction;
         private string _containingTypeName;
+        private HashSet<ResourceDefinition> _resourcesUsed = new HashSet<ResourceDefinition>();
 
         public ShaderMethodVisitor(
             Compilation compilation,
@@ -31,7 +32,7 @@ namespace ShaderGen
 
         private SemanticModel GetModel(SyntaxNode node) => _compilation.GetSemanticModel(node.SyntaxTree);
 
-        public string VisitFunction(BlockSyntax node)
+        public MethodProcessResult VisitFunction(BlockSyntax node)
         {
             _containingTypeName = Utilities.GetFullNestedTypePrefix(node, out bool _);
             StringBuilder sb = new StringBuilder();
@@ -45,7 +46,7 @@ namespace ShaderGen
 
             sb.AppendLine(functionDeclStr);
             sb.AppendLine(blockResult);
-            return sb.ToString();
+            return new MethodProcessResult(sb.ToString(), _resourcesUsed);
         }
 
         public override string VisitBlock(BlockSyntax node)
@@ -178,12 +179,13 @@ namespace ShaderGen
                     if (ims.IsExtensionMethod)
                     {
                         string identifier = Visit(maes.Expression);
-
+                        string identifierType = Utilities.GetFullTypeName(GetModel(maes.Expression), maes.Expression);
                         Debug.Assert(identifier != null);
                         // Might need FullTypeName here too.
                         pis.Add(new InvocationParameterInfo()
                         {
-                            Identifier = identifier
+                            Identifier = identifier,
+                            FullTypeName = identifierType,
                         });
                     }
 
@@ -281,6 +283,9 @@ namespace ShaderGen
             }
             if (symbol.Kind == SymbolKind.Field && containingTypeName == _containingTypeName)
             {
+                string symbolName = symbol.Name;
+                ResourceDefinition referencedResource = _backend.GetContext(_setName).Resources.Single(rd => rd.Name == symbolName);
+                _resourcesUsed.Add(referencedResource);
                 return _backend.CorrectFieldAccess(symbolInfo);
             }
             else if (symbol.Kind == SymbolKind.Property)
@@ -367,6 +372,42 @@ namespace ShaderGen
             return sb.ToString();
         }
 
+        public override string VisitSwitchStatement(SwitchStatementSyntax node)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("switch (" + Visit(node.Expression) + ")");
+            sb.AppendLine("{");
+            foreach (SwitchSectionSyntax section in node.Sections)
+            {
+                foreach (SwitchLabelSyntax label in section.Labels)
+                {
+                    sb.AppendLine(Visit(label));
+                }
+
+                foreach (StatementSyntax statement in section.Statements)
+                {
+                    sb.AppendLine(Visit(statement));
+                }
+                sb.AppendLine("break;");
+            }
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        public override string VisitCaseSwitchLabel(CaseSwitchLabelSyntax node)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("case " + Visit(node.Value) + ":");
+            return sb.ToString();
+        }
+
+        public override string VisitDefaultSwitchLabel(DefaultSwitchLabelSyntax node)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("default:");
+            return sb.ToString();
+        }
+
         public override string VisitPrefixUnaryExpression(PrefixUnaryExpressionSyntax node)
         {
             return node.OperatorToken.ToFullString() + Visit(node.Operand);
@@ -411,7 +452,12 @@ namespace ShaderGen
 
         protected string GetParameterDeclList()
         {
-            return string.Join(", ", _shaderFunction.Parameters.Select(pd => $"{_backend.CSharpToShaderType(pd.Type.Name)} {_backend.CorrectIdentifier(pd.Name)}"));
+            return string.Join(", ", _shaderFunction.Parameters.Select(FormatParameter));
+        }
+
+        protected virtual string FormatParameter(ParameterDefinition pd)
+        {
+            return $"{_backend.CSharpToShaderType(pd.Type.Name)} {_backend.CorrectIdentifier(pd.Name)}";
         }
 
         private InvocationParameterInfo[] GetParameterInfos(ArgumentListSyntax argumentList)

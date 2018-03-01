@@ -1,10 +1,9 @@
 ﻿using ShaderGen;
 using System.Numerics;
-using static ShaderGen.ShaderBuiltins;
 
 namespace TestShaders
 {
-    internal class Matrix4x4Members
+    public class Matrix4x4Members
     {
         public Matrix4x4 InputMatrix;
 

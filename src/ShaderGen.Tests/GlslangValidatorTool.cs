@@ -1,8 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -32,7 +30,7 @@ namespace ShaderGen.Tests
             if (result.ExitCode != 0)
             {
                 string message = result.StdOut;
-                throw new InvalidOperationException("HLSL compilation failed: " + message);
+                throw new InvalidOperationException("GLSL compilation failed: " + message);
             }
         }
 
