@@ -22,13 +22,16 @@ namespace ShaderGen.Metal
                 { "Pow", Pow },
                 { "Acos", SimpleNameTranslator("acos") },
                 { "Cos", SimpleNameTranslator("cos") },
+                { "Ddx", SimpleNameTranslator("dfdx") },
+                { "Ddy", SimpleNameTranslator("dfdy") },
                 { "Frac", SimpleNameTranslator("fract") },
                 { "Lerp", SimpleNameTranslator("mix") },
                 { "Sin", SimpleNameTranslator("sin") },
                 { "Tan", SimpleNameTranslator("tan") },
                 { "Clamp", Clamp },
                 { "Mod", SimpleNameTranslator("fmod") },
-                { "Sample", Sample2D },
+                { "Sample", Sample },
+                { "SampleGrad", SampleGrad },
                 { "Load", Load },
                 { "Discard", Discard },
                 { nameof(ShaderBuiltins.ClipToTextureCoordinates), ClipToTextureCoordinates },
@@ -242,9 +245,30 @@ namespace ShaderGen.Metal
             };
         }
 
-        private static string Sample2D(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        private static string Sample(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return $"{parameters[0].Identifier}.sample({parameters[1].Identifier}, {parameters[2].Identifier})";
+            if (parameters[0].FullTypeName == "ShaderGen.Texture2DArrayResource")
+            {
+                // Metal texture array sample function:
+                // sample(sampler s, float2 coord, uint array)
+                return $"{parameters[0].Identifier}.sample({parameters[1].Identifier}, {parameters[2].Identifier}, {parameters[3].Identifier})";
+            }
+            else
+            {
+                return $"{parameters[0].Identifier}.sample({parameters[1].Identifier}, {parameters[2].Identifier})";
+            }
+        }
+
+        private static string SampleGrad(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            if (parameters[0].FullTypeName == "ShaderGen.Texture2DArrayResource")
+            {
+                return $"{parameters[0].Identifier}.sample({parameters[1].Identifier}, {parameters[2].Identifier}, {parameters[3].Identifier}, gradient2d({parameters[4].Identifier}, {parameters[5].Identifier}))";
+            }
+            else
+            {
+                return $"{parameters[0].Identifier}.sample({parameters[1].Identifier}, {parameters[2].Identifier}, gradient2d({parameters[3].Identifier}, {parameters[4].Identifier}))";
+            }
         }
 
         private static string Load(string typeName, string methodName, InvocationParameterInfo[] parameters)

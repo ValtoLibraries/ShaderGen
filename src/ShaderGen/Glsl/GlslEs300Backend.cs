@@ -4,9 +4,9 @@ using Microsoft.CodeAnalysis;
 
 namespace ShaderGen.Glsl
 {
-    public class Glsl330Backend : GlslBackendBase
+    public class GlslEs300Backend : GlslBackendBase
     {
-        public Glsl330Backend(Compilation compilation) : base(compilation)
+        public GlslEs300Backend(Compilation compilation) : base(compilation)
         {
         }
 
@@ -19,9 +19,20 @@ namespace ShaderGen.Glsl
 
         protected override void WriteVersionHeader(ShaderFunction function, StringBuilder sb)
         {
-            string version = function.Type == ShaderFunctionType.ComputeEntryPoint ? "430" : "330 core";
+            bool useVersion320 = function.UsesTexture2DMS;
+            string versionNumber = useVersion320 ? "320" : "300";
+            string version = $"{versionNumber} es";
             sb.AppendLine($"#version {version}");
+            sb.AppendLine($"precision mediump float;");
+            sb.AppendLine($"precision mediump int;");
+            sb.AppendLine($"precision mediump sampler2D;");
+            sb.AppendLine($"precision mediump sampler2DArray;");
+            if (useVersion320)
+            {
+                sb.AppendLine($"precision mediump sampler2DMS;");
+            }
             sb.AppendLine();
+
             sb.AppendLine($"struct SamplerDummy {{ int _dummyValue; }};");
             sb.AppendLine();
         }
@@ -76,7 +87,54 @@ namespace ShaderGen.Glsl
 
         protected override string FormatInvocationCore(string setName, string type, string method, InvocationParameterInfo[] parameterInfos)
         {
-            return Glsl330KnownFunctions.TranslateInvocation(type, method, parameterInfos);
+            return GlslEs300KnownFunctions.TranslateInvocation(type, method, parameterInfos);
+        }
+
+        internal override string CorrectBinaryExpression(
+            string leftExpr,
+            string leftExprType,
+            string operatorToken,
+            string rightExpr,
+            string rightExprType)
+        {
+            if (IsIntegerType(leftExprType) && !IsIntegerType(rightExprType))
+            {
+                leftExpr = $"float({leftExpr})";
+            }
+            else if (IsIntegerType(rightExprType) && !IsIntegerType(leftExprType))
+            {
+                rightExpr = $"float({rightExpr})";
+            }
+
+            return $"{leftExpr} {operatorToken} {rightExpr}";
+        }
+
+        private bool IsIntegerType(string exprType)
+        {
+            return exprType == "System.Int32" || exprType == "System.UInt32"
+                || exprType == "int" || exprType == "uint";
+        }
+
+        internal override string CorrectAssignedValue(string leftExprType, string value, string valueType)
+        {
+            if (valueType == "System.Int32" && leftExprType != "System.Int32")
+            {
+                value = $"float({value})";
+            }
+
+            return $"{value}";
+        }
+
+        protected override string FormatInvocationParameter(ParameterDefinition def, InvocationParameterInfo ipi)
+        {
+            if (def.Type.Name == "System.Single" && IsIntegerType(ipi.FullTypeName))
+            {
+                return $"float({ipi.Identifier})";
+            }
+            else
+            {
+                return ipi.Identifier;
+            }
         }
 
         protected override void WriteInOutVariable(

@@ -101,6 +101,12 @@ namespace ShaderGen.Hlsl
             sb.AppendLine();
         }
 
+        private void WriteTexture2DArray(StringBuilder sb, ResourceDefinition rd, int binding)
+        {
+            sb.AppendLine($"Texture2DArray {CorrectIdentifier(rd.Name)} : register(t{binding});");
+            sb.AppendLine();
+        }
+
         private void WriteTextureCube(StringBuilder sb, ResourceDefinition rd, int binding)
         {
             sb.AppendLine($"TextureCube {CorrectIdentifier(rd.Name)} : register(t{binding});");
@@ -140,7 +146,7 @@ namespace ShaderGen.Hlsl
             HashSet<ResourceDefinition> resourcesUsed = new HashSet<ResourceDefinition>();
 
             BackendContext setContext = GetContext(setName);
-            ShaderFunctionAndBlockSyntax entryPoint = setContext.Functions.SingleOrDefault(
+            ShaderFunctionAndMethodDeclarationSyntax entryPoint = setContext.Functions.SingleOrDefault(
                 sfabs => sfabs.Function.Name == function.Name);
             if (entryPoint == null)
             {
@@ -156,23 +162,15 @@ namespace ShaderGen.Hlsl
                 WriteStructure(sb, sd);
             }
 
-            FunctionCallGraphDiscoverer fcgd = new FunctionCallGraphDiscoverer(
-                Compilation,
-                new TypeAndMethodName { TypeName = function.DeclaringType, MethodName = function.Name });
-            fcgd.GenerateFullGraph();
-            TypeAndMethodName[] orderedFunctionList = fcgd.GetOrderedCallList();
-
             List<ResourceDefinition[]> resourcesBySet = setContext.Resources.GroupBy(rd => rd.Set)
                 .Select(g => g.ToArray()).ToList();
 
             StringBuilder functionsSB = new StringBuilder();
-            foreach (TypeAndMethodName name in orderedFunctionList)
+            foreach (ShaderFunctionAndMethodDeclarationSyntax f in entryPoint.OrderedFunctionList)
             {
-                ShaderFunctionAndBlockSyntax f = setContext.Functions.Single(
-                    sfabs => sfabs.Function.DeclaringType == name.TypeName && sfabs.Function.Name == name.MethodName);
                 if (!f.Function.IsEntryPoint)
                 {
-                    MethodProcessResult processResult = new HlslMethodVisitor(Compilation, setName, f.Function, this).VisitFunction(f.Block);
+                    MethodProcessResult processResult = new HlslMethodVisitor(Compilation, setName, f.Function, this).VisitFunction(f.MethodDeclaration);
                     foreach (ResourceDefinition rd in processResult.ResourcesUsed)
                     {
                         resourcesUsed.Add(rd);
@@ -182,7 +180,7 @@ namespace ShaderGen.Hlsl
             }
 
             MethodProcessResult result = new HlslMethodVisitor(Compilation, setName, entryPoint.Function, this)
-                .VisitFunction(entryPoint.Block);
+                .VisitFunction(entryPoint.MethodDeclaration);
             foreach (ResourceDefinition rd in result.ResourcesUsed)
             {
                 resourcesUsed.Add(rd);
@@ -211,6 +209,13 @@ namespace ShaderGen.Hlsl
                             if (resourcesUsed.Contains(rd))
                             {
                                 WriteTexture2D(sb, rd, textureBinding);
+                            }
+                            textureBinding++;
+                            break;
+                        case ShaderResourceKind.Texture2DArray:
+                            if (resourcesUsed.Contains(rd))
+                            {
+                                WriteTexture2DArray(sb, rd, textureBinding);
                             }
                             textureBinding++;
                             break;
@@ -289,6 +294,19 @@ namespace ShaderGen.Hlsl
         internal override string GetComputeGroupCountsDeclaration(UInt3 groupCounts)
         {
             return $"[numthreads({groupCounts.X}, {groupCounts.Y}, {groupCounts.Z})]";
+        }
+
+        internal override string ParameterDirection(ParameterDirection direction)
+        {
+            switch (direction)
+            {
+                case ShaderGen.ParameterDirection.Out:
+                    return "out";
+                case ShaderGen.ParameterDirection.InOut:
+                    return "inout";
+                default:
+                    return string.Empty;
+            }
         }
 
         private struct HlslSemanticTracker

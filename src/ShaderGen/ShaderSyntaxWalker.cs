@@ -29,52 +29,16 @@ namespace ShaderGen
 
         public override void VisitMethodDeclaration(MethodDeclarationSyntax node)
         {
-            string functionName = node.Identifier.ToFullString();
-            List<ParameterDefinition> parameters = new List<ParameterDefinition>();
-            foreach (ParameterSyntax ps in node.ParameterList.Parameters)
+            ShaderFunctionAndMethodDeclarationSyntax sfab = Utilities.GetShaderFunction(node, _compilation, true);
+            foreach (LanguageBackend b in _backends)
             {
-                parameters.Add(ParameterDefinition.GetParameterDefinition(_compilation, ps));
-            }
+                b.AddFunction(_shaderSet.Name, sfab);
 
-            TypeReference returnType = new TypeReference(GetModel(node).GetFullTypeName(node.ReturnType));
-
-            UInt3 computeGroupCounts = new UInt3();
-            bool isFragmentShader = false, isComputeShader = false;
-            bool isVertexShader = Utilities.GetMethodAttributes(node, "VertexShader").Any();
-            if (!isVertexShader)
-            {
-                isFragmentShader = Utilities.GetMethodAttributes(node, "FragmentShader").Any();
-            }
-            if (!isVertexShader && !isFragmentShader)
-            {
-                AttributeSyntax computeShaderAttr = Utilities.GetMethodAttributes(node, "ComputeShader").FirstOrDefault();
-                if (computeShaderAttr != null)
+                foreach (var calledFunction in sfab.OrderedFunctionList)
                 {
-                    isComputeShader = true;
-                    computeGroupCounts.X = GetAttributeArgumentUIntValue(computeShaderAttr, 0);
-                    computeGroupCounts.Y = GetAttributeArgumentUIntValue(computeShaderAttr, 1);
-                    computeGroupCounts.Z = GetAttributeArgumentUIntValue(computeShaderAttr, 2);
+                    b.AddFunction(_shaderSet.Name, calledFunction);
                 }
             }
-
-            ShaderFunctionType type = isVertexShader
-                ? ShaderFunctionType.VertexEntryPoint
-                : isFragmentShader
-                    ? ShaderFunctionType.FragmentEntryPoint
-                    : isComputeShader
-                        ? ShaderFunctionType.ComputeEntryPoint
-                        : ShaderFunctionType.Normal;
-
-            string nestedTypePrefix = Utilities.GetFullNestedTypePrefix(node, out bool nested);
-            ShaderFunction sf = new ShaderFunction(
-                nestedTypePrefix,
-                functionName,
-                returnType,
-                parameters.ToArray(),
-                type,
-                computeGroupCounts);
-            ShaderFunctionAndBlockSyntax sfab = new ShaderFunctionAndBlockSyntax(sf, node.Body);
-            foreach (LanguageBackend b in _backends) { b.AddFunction(_shaderSet.Name, sfab); }
         }
 
         public override void VisitStructDeclaration(StructDeclarationSyntax node)
@@ -298,6 +262,7 @@ namespace ShaderGen
         {
             string name = typeInfo.Type.ToDisplayString();
             if (name != nameof(ShaderGen) + "." + nameof(Texture2DResource)
+                && name != nameof(ShaderGen) + "." + nameof(Texture2DArrayResource)
                 && name != nameof(ShaderGen) + "." + nameof(TextureCubeResource)
                 && name != nameof(ShaderGen) + "." + nameof(Texture2DMSResource)
                 && name != nameof(ShaderGen) + "." + nameof(SamplerResource))
@@ -314,6 +279,10 @@ namespace ShaderGen
             if (fullTypeName == "ShaderGen.Texture2DResource")
             {
                 return ShaderResourceKind.Texture2D;
+            }
+            if (fullTypeName == "ShaderGen.Texture2DArrayResource")
+            {
+                return ShaderResourceKind.Texture2DArray;
             }
             else if (fullTypeName == "ShaderGen.TextureCubeResource")
             {

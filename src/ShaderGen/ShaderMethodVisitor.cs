@@ -32,11 +32,25 @@ namespace ShaderGen
 
         private SemanticModel GetModel(SyntaxNode node) => _compilation.GetSemanticModel(node.SyntaxTree);
 
-        public MethodProcessResult VisitFunction(BlockSyntax node)
+        public MethodProcessResult VisitFunction(MethodDeclarationSyntax node)
         {
-            _containingTypeName = Utilities.GetFullNestedTypePrefix(node, out bool _);
+            _containingTypeName = Utilities.GetFullNestedTypePrefix((SyntaxNode)node.Body ?? node.ExpressionBody, out bool _);
             StringBuilder sb = new StringBuilder();
-            string blockResult = VisitBlock(node); // Visit block first in order to discover builtin variables.
+            string blockResult;
+            // Visit block first in order to discover builtin variables.
+            if (node.Body != null)
+            {
+                blockResult = VisitBlock(node.Body);
+            }
+            else if (node.ExpressionBody != null)
+            {
+                blockResult = VisitArrowExpressionClause(node.ExpressionBody);
+            }
+            else
+            {
+                throw new NotSupportedException("Methods without bodies cannot be shader functions.");
+            }
+
             string functionDeclStr = GetFunctionDeclStr();
 
             if (_shaderFunction.Type == ShaderFunctionType.ComputeEntryPoint)
@@ -71,6 +85,30 @@ namespace ShaderGen
             return sb.ToString();
         }
 
+        public override string VisitArrowExpressionClause(ArrowExpressionClauseSyntax node)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("{");
+
+            string expressionResult = Visit(node.Expression);
+            if (string.IsNullOrEmpty(expressionResult))
+            {
+                throw new NotImplementedException($"{node.Expression.GetType()} expressions are not implemented.");
+            }
+
+            if (_shaderFunction.ReturnType.Name == "System.Void")
+            {
+                sb.AppendLine("    " + expressionResult + ";");
+            }
+            else
+            {
+                sb.AppendLine("    return " + expressionResult + ";");
+            }
+
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
         protected virtual string GetFunctionDeclStr()
         {
             string returnType = _backend.CSharpToShaderType(_shaderFunction.ReturnType.Name);
@@ -83,7 +121,7 @@ namespace ShaderGen
 
         public override string VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node)
         {
-            return Visit(node.Declaration) + ";";
+            return Visit(node.Declaration);
         }
 
         public override string VisitEqualsValueClause(EqualsValueClauseSyntax node)
@@ -98,14 +136,15 @@ namespace ShaderGen
             {
                 throw new ShaderGenerationException(
                     "Modulus operator not supported in shader functions. Use ShaderBuiltins.Mod instead.");
-
             }
 
-            return base.Visit(node.Left)
-                + " "
-                + token
-                + base.Visit(node.Right)
-                + ";";
+            string leftExpr = base.Visit(node.Left);
+            string leftExprType = Utilities.GetFullTypeName(GetModel(node), node.Left);
+            string rightExpr = base.Visit(node.Right);
+            string rightExprType = Utilities.GetFullTypeName(GetModel(node), node.Right);
+
+            string assignedValue = _backend.CorrectAssignedValue(leftExprType, rightExpr, rightExprType);
+            return $"{leftExpr} {token} {assignedValue}";
         }
 
         public override string VisitMemberAccessExpression(MemberAccessExpressionSyntax node)
@@ -148,7 +187,7 @@ namespace ShaderGen
 
         public override string VisitExpressionStatement(ExpressionStatementSyntax node)
         {
-            return Visit(node.Expression);
+            return Visit(node.Expression) + ";";
         }
 
         public override string VisitReturnStatement(ReturnStatementSyntax node)
@@ -166,6 +205,12 @@ namespace ShaderGen
                 SymbolInfo symbolInfo = GetModel(node).GetSymbolInfo(ins);
                 string type = symbolInfo.Symbol.ContainingType.ToDisplayString();
                 string method = symbolInfo.Symbol.Name;
+
+                if (type == "ShaderGen.ShaderBuiltins")
+                {
+                    ValidateBuiltInMethod(method);
+                }
+
                 return _backend.FormatInvocation(_setName, type, method, parameterInfos);
             }
             else if (node.Expression is MemberAccessExpressionSyntax maes)
@@ -224,6 +269,17 @@ namespace ShaderGen
             }
         }
 
+        private void ValidateBuiltInMethod(string name)
+        {
+            if (name == nameof(ShaderBuiltins.Ddx) || name == nameof(ShaderBuiltins.Ddy))
+            {
+                if (_shaderFunction.Type == ShaderFunctionType.VertexEntryPoint || _shaderFunction.Type == ShaderFunctionType.ComputeEntryPoint)
+                {
+                    throw new ShaderGenerationException("Ddx and Ddy can only be used within Fragment shaders.");
+                }
+            }
+        }
+
         public override string VisitBinaryExpression(BinaryExpressionSyntax node)
         {
             string token = node.OperatorToken.ToFullString().Trim();
@@ -233,9 +289,13 @@ namespace ShaderGen
                     "Modulus operator not supported in shader functions. Use ShaderBuiltins.Mod instead.");
             }
 
-            return Visit(node.Left) + " "
-                + node.OperatorToken + " "
-                + Visit(node.Right);
+            string leftExpr = Visit(node.Left);
+            string leftExprType = Utilities.GetFullTypeName(GetModel(node), node.Left);
+            string operatorToken = node.OperatorToken.ToString();
+            string rightExpr = Visit(node.Right);
+            string rightExprType = Utilities.GetFullTypeName(GetModel(node), node.Right);
+
+            return _backend.CorrectBinaryExpression(leftExpr, leftExprType, operatorToken, rightExpr, rightExprType);
         }
 
         public override string VisitParenthesizedExpression(ParenthesizedExpressionSyntax node)
@@ -286,6 +346,8 @@ namespace ShaderGen
                 string symbolName = symbol.Name;
                 ResourceDefinition referencedResource = _backend.GetContext(_setName).Resources.Single(rd => rd.Name == symbolName);
                 _resourcesUsed.Add(referencedResource);
+                _shaderFunction.UsesTexture2DMS |= referencedResource.ValueType.Name == "ShaderGen.Texture2DMSResource";
+
                 return _backend.CorrectFieldAccess(symbolInfo);
             }
             else if (symbol.Kind == SymbolKind.Property)
@@ -367,7 +429,7 @@ namespace ShaderGen
             string declaration = Visit(node.Declaration);
             string incrementers = string.Join(", ", node.Incrementors.Select(es => Visit(es)));
             string condition = Visit(node.Condition);
-            sb.AppendLine($"for ({declaration}; {condition}; {incrementers})");
+            sb.AppendLine($"for ({declaration} {condition}; {incrementers})");
             sb.AppendLine(Visit(node.Statement));
             return sb.ToString();
         }
@@ -388,12 +450,10 @@ namespace ShaderGen
                 {
                     sb.AppendLine(Visit(statement));
                 }
-                sb.AppendLine("break;");
             }
             sb.AppendLine("}");
             return sb.ToString();
         }
-
         public override string VisitCaseSwitchLabel(CaseSwitchLabelSyntax node)
         {
             StringBuilder sb = new StringBuilder();
@@ -406,6 +466,11 @@ namespace ShaderGen
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("default:");
             return sb.ToString();
+        }
+
+        public override string VisitBreakStatement(BreakStatementSyntax node)
+        {
+            return "break;";
         }
 
         public override string VisitPrefixUnaryExpression(PrefixUnaryExpressionSyntax node)
@@ -425,17 +490,32 @@ namespace ShaderGen
                 throw new NotImplementedException();
             }
 
-            string csName = _compilation.GetSemanticModel(node.Type.SyntaxTree).GetFullTypeName(node.Type);
-            string mappedType = _backend.CSharpToShaderType(csName);
-            string initializerStr = Visit(node.Variables[0].Initializer);
-            string result = mappedType + " "
-                + _backend.CorrectIdentifier(node.Variables[0].Identifier.ToString());
-            if (!string.IsNullOrEmpty(initializerStr))
+            StringBuilder sb = new StringBuilder();
+
+            string varType = _compilation.GetSemanticModel(node.Type.SyntaxTree).GetFullTypeName(node.Type);
+            string mappedType = _backend.CSharpToShaderType(varType);
+
+            sb.Append(mappedType);
+            sb.Append(' ');
+            VariableDeclaratorSyntax varDeclarator = node.Variables[0];
+            string identifier = _backend.CorrectIdentifier(varDeclarator.Identifier.ToString());
+            sb.Append(identifier);
+
+            if (varDeclarator.Initializer != null)
             {
-                result += " " + initializerStr;
+                sb.Append(' ');
+                sb.Append(varDeclarator.Initializer.EqualsToken.ToString());
+                sb.Append(' ');
+
+                string rightExpr = base.Visit(varDeclarator.Initializer.Value);
+                string rightExprType = Utilities.GetFullTypeName(GetModel(node), varDeclarator.Initializer.Value);
+
+                sb.Append(_backend.CorrectAssignedValue(varType, rightExpr, rightExprType));
             }
 
-            return result;
+            sb.Append(';');
+
+            return sb.ToString();
         }
 
         public override string VisitElementAccessExpression(ElementAccessExpressionSyntax node)
@@ -450,6 +530,14 @@ namespace ShaderGen
                 + node.CloseBracketToken.ToFullString();
         }
 
+        public override string VisitCastExpression(CastExpressionSyntax node)
+        {
+            string varType = _compilation.GetSemanticModel(node.Type.SyntaxTree).GetFullTypeName(node.Type);
+            string mappedType = _backend.CSharpToShaderType(varType);
+
+            return _backend.CorrectCastExpression(mappedType, Visit(node.Expression));
+        }
+
         protected string GetParameterDeclList()
         {
             return string.Join(", ", _shaderFunction.Parameters.Select(FormatParameter));
@@ -457,7 +545,7 @@ namespace ShaderGen
 
         protected virtual string FormatParameter(ParameterDefinition pd)
         {
-            return $"{_backend.CSharpToShaderType(pd.Type.Name)} {_backend.CorrectIdentifier(pd.Name)}";
+            return $"{_backend.ParameterDirection(pd.Direction)} {_backend.CSharpToShaderType(pd.Type.Name)} {_backend.CorrectIdentifier(pd.Name)}";
         }
 
         private InvocationParameterInfo[] GetParameterInfos(ArgumentListSyntax argumentList)

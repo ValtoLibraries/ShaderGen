@@ -77,12 +77,6 @@ namespace ShaderGen.Metal
 
             List<string> resourceArgList = new List<string>();
             int bufferBinding = 0;
-            if (function.Type == ShaderFunctionType.VertexEntryPoint
-                && function.Parameters.Length > 0)
-            {
-                bufferBinding = 1;
-            }
-
             int textureBinding = 0;
             int samplerBinding = 0;
             int setIndex = 0;
@@ -106,6 +100,13 @@ namespace ShaderGen.Metal
                             if (resourcesUsed.Contains(rd))
                             {
                                 resourceArgList.Add(WriteTexture2D(rd, textureBinding));
+                            }
+                            textureBinding++;
+                            break;
+                        case ShaderResourceKind.Texture2DArray:
+                            if (resourcesUsed.Contains(rd))
+                            {
+                                resourceArgList.Add(WriteTexture2DArray(rd, textureBinding));
                             }
                             textureBinding++;
                             break;
@@ -162,6 +163,11 @@ namespace ShaderGen.Metal
             return $"texture2d<float> {rd.Name} [[ texture({binding}) ]]";
         }
 
+        private string WriteTexture2DArray(ResourceDefinition rd, int binding)
+        {
+            return $"texture2d_array<float> {rd.Name} [[ texture({binding}) ]]";
+        }
+
         private string WriteTextureCube(ResourceDefinition rd, int binding)
         {
             return $"texturecube<float> {rd.Name} [[ texture({binding}) ]]";
@@ -179,7 +185,7 @@ namespace ShaderGen.Metal
 
         private string WriteStructuredBuffer(ResourceDefinition rd, int binding)
         {
-            return $"constant {CSharpToShaderType(rd.ValueType.Name)} &{rd.Name} [[ buffer({binding}) ]]";
+            return $"constant {CSharpToShaderType(rd.ValueType.Name)} *{rd.Name} [[ buffer({binding}) ]]";
         }
 
         private string WriteRWStructuredBuffer(ResourceDefinition rd, int binding)
@@ -194,7 +200,7 @@ namespace ShaderGen.Metal
             StringBuilder sb = new StringBuilder();
             HashSet<ResourceDefinition> resourcesUsed = new HashSet<ResourceDefinition>();
             BackendContext setContext = GetContext(setName);
-            ShaderFunctionAndBlockSyntax entryPoint = setContext.Functions.SingleOrDefault(
+            ShaderFunctionAndMethodDeclarationSyntax entryPoint = setContext.Functions.SingleOrDefault(
                 sfabs => sfabs.Function.Name == function.Name);
             if (entryPoint == null)
             {
@@ -215,21 +221,12 @@ namespace ShaderGen.Metal
                 WriteStructure(sb, sd);
             }
 
-            FunctionCallGraphDiscoverer fcgd = new FunctionCallGraphDiscoverer(
-                Compilation,
-                new TypeAndMethodName { TypeName = function.DeclaringType, MethodName = function.Name });
-            fcgd.GenerateFullGraph();
-            // TODO: Necessary for Metal?
-            TypeAndMethodName[] orderedFunctionList = fcgd.GetOrderedCallList();
-
             StringBuilder functionsSB = new StringBuilder();
-            foreach (TypeAndMethodName name in orderedFunctionList)
+            foreach (ShaderFunctionAndMethodDeclarationSyntax f in entryPoint.OrderedFunctionList)
             {
-                ShaderFunctionAndBlockSyntax f = setContext.Functions.Single(
-                    sfabs => sfabs.Function.DeclaringType == name.TypeName && sfabs.Function.Name == name.MethodName);
                 if (!f.Function.IsEntryPoint)
                 {
-                    MethodProcessResult processResult = new MetalMethodVisitor(Compilation, setName, f.Function, this).VisitFunction(f.Block);
+                    MethodProcessResult processResult = new MetalMethodVisitor(Compilation, setName, f.Function, this).VisitFunction(f.MethodDeclaration);
                     foreach (ResourceDefinition rd in processResult.ResourcesUsed)
                     {
                         resourcesUsed.Add(rd);
@@ -239,7 +236,7 @@ namespace ShaderGen.Metal
             }
 
             MethodProcessResult entryResult = new MetalMethodVisitor(Compilation, setName, entryPoint.Function, this)
-                .VisitFunction(entryPoint.Block);
+                .VisitFunction(entryPoint.MethodDeclaration);
             foreach (ResourceDefinition rd in entryResult.ResourcesUsed)
             {
                 resourcesUsed.Add(rd);
@@ -370,6 +367,8 @@ namespace ShaderGen.Metal
             {
                 case ShaderResourceKind.Texture2D:
                     return $"thread texture2d<float> {rd.Name};";
+                case ShaderResourceKind.Texture2DArray:
+                    return $"thread texture2d_array<float> {rd.Name};";
                 case ShaderResourceKind.Texture2DMS:
                     return $"thread texture2d_ms<float> {rd.Name};";
                 case ShaderResourceKind.TextureCube:
@@ -377,8 +376,9 @@ namespace ShaderGen.Metal
                 case ShaderResourceKind.Sampler:
                     return $"thread sampler {rd.Name};";
                 case ShaderResourceKind.Uniform:
-                case ShaderResourceKind.StructuredBuffer:
                     return $"constant {CSharpToShaderType(rd.ValueType.Name)}& {rd.Name};";
+                case ShaderResourceKind.StructuredBuffer:
+                    return $"constant {CSharpToShaderType(rd.ValueType.Name)}* {rd.Name};";
                 case ShaderResourceKind.RWStructuredBuffer:
                     return $"device {CSharpToShaderType(rd.ValueType.Name)}* {rd.Name};";
                 default:
@@ -393,6 +393,8 @@ namespace ShaderGen.Metal
             {
                 case ShaderResourceKind.Texture2D:
                     return $"thread texture2d<float> {rd.Name}_param";
+                case ShaderResourceKind.Texture2DArray:
+                    return $"thread texture2d_array<float> {rd.Name}_param";
                 case ShaderResourceKind.Texture2DMS:
                     return $"thread texture2d_ms<float> {rd.Name}_param";
                 case ShaderResourceKind.TextureCube:
@@ -400,8 +402,9 @@ namespace ShaderGen.Metal
                 case ShaderResourceKind.Sampler:
                     return $"thread sampler {rd.Name}_param";
                 case ShaderResourceKind.Uniform:
-                case ShaderResourceKind.StructuredBuffer:
                     return $"constant {CSharpToShaderType(rd.ValueType.Name)}& {rd.Name}_param";
+                case ShaderResourceKind.StructuredBuffer:
+                    return $"constant {CSharpToShaderType(rd.ValueType.Name)}* {rd.Name}_param";
                 case ShaderResourceKind.RWStructuredBuffer:
                     return $"device {CSharpToShaderType(rd.ValueType.Name)}* {rd.Name}_param";
                 default:
@@ -462,6 +465,18 @@ namespace ShaderGen.Metal
         internal override string CorrectIdentifier(string identifier)
         {
             return identifier;
+        }
+
+        internal override string ParameterDirection(ParameterDirection direction)
+        {
+            switch (direction)
+            {
+                case ShaderGen.ParameterDirection.Out:
+                case ShaderGen.ParameterDirection.InOut:
+                    return "&";
+                default:
+                    return string.Empty;
+            }
         }
     }
 }

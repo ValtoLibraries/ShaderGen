@@ -1,6 +1,8 @@
 ﻿using ShaderGen;
 using System.Numerics;
 
+using static TestShaders.AnotherClass;
+
 namespace TestShaders
 {
     public class CustomMethodCalls
@@ -12,12 +14,15 @@ namespace TestShaders
             Position4 shuffled = ShufflePosition4(reversed);
             SystemPosition4 output;
             output.Position = shuffled.Position;
+            output.Position.X = CustomAbs(output.Position.X);
+            output.Position.X += HelperMethod(output.Position.X);
             return output;
         }
 
         private Position4 Reverse(Position4 vert)
         {
             vert.Position = vert.Position.WZYX();
+            vert.Position.X = Invert(3);
             return vert;
         }
 
@@ -31,6 +36,11 @@ namespace TestShaders
         {
             Vector4 result = v.XZYW();
             return result;
+        }
+
+        private float Invert(float x)
+        {
+            return -x;
         }
     }
 }

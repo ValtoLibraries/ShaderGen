@@ -22,7 +22,8 @@ namespace ShaderGen.Glsl
             StringBuilder fb = new StringBuilder();
             foreach (FieldDefinition field in sd.Fields)
             {
-                fb.Append(CSharpToShaderType(field.Type.Name.Trim()));
+                string fieldTypeStr = GetStructureFieldType(field);
+                fb.Append(fieldTypeStr);
                 fb.Append(' ');
                 fb.Append(CorrectIdentifier(field.Name.Trim()));
                 int arrayCount = field.ArrayElementCount;
@@ -39,6 +40,10 @@ namespace ShaderGen.Glsl
             sb.AppendLine();
         }
 
+        protected virtual string GetStructureFieldType(FieldDefinition field)
+        {
+            return CSharpToShaderType(field.Type.Name.Trim());
+        }
 
         protected override MethodProcessResult GenerateFullTextCore(string setName, ShaderFunction function)
         {
@@ -46,7 +51,7 @@ namespace ShaderGen.Glsl
             StringBuilder sb = new StringBuilder();
             HashSet<ResourceDefinition> resourcesUsed = new HashSet<ResourceDefinition>();
 
-            ShaderFunctionAndBlockSyntax entryPoint = context.Functions.SingleOrDefault(
+            ShaderFunctionAndMethodDeclarationSyntax entryPoint = context.Functions.SingleOrDefault(
                 sfabs => sfabs.Function.Name == function.Name);
             if (entryPoint == null)
             {
@@ -54,8 +59,6 @@ namespace ShaderGen.Glsl
             }
 
             ValidateRequiredSemantics(setName, entryPoint.Function, function.Type);
-
-            WriteVersionHeader(function, sb);
 
             StructureDefinition[] orderedStructures
                 = StructureDependencyGraph.GetOrderedStructureList(Compilation, context.Structures);
@@ -75,6 +78,9 @@ namespace ShaderGen.Glsl
                     case ShaderResourceKind.Texture2D:
                         WriteTexture2D(sb, rd);
                         break;
+                    case ShaderResourceKind.Texture2DArray:
+                        WriteTexture2DArray(sb, rd);
+                        break;
                     case ShaderResourceKind.TextureCube:
                         WriteTextureCube(sb, rd);
                         break;
@@ -92,19 +98,11 @@ namespace ShaderGen.Glsl
                 }
             }
 
-            FunctionCallGraphDiscoverer fcgd = new FunctionCallGraphDiscoverer(
-                Compilation,
-                new TypeAndMethodName { TypeName = function.DeclaringType, MethodName = function.Name });
-            fcgd.GenerateFullGraph();
-            TypeAndMethodName[] orderedFunctionList = fcgd.GetOrderedCallList();
-
-            foreach (TypeAndMethodName name in orderedFunctionList)
+            foreach (ShaderFunctionAndMethodDeclarationSyntax f in entryPoint.OrderedFunctionList)
             {
-                ShaderFunctionAndBlockSyntax f = context.Functions.Single(
-                    sfabs => sfabs.Function.DeclaringType == name.TypeName && sfabs.Function.Name == name.MethodName);
                 if (!f.Function.IsEntryPoint)
                 {
-                    MethodProcessResult processResult = new ShaderMethodVisitor(Compilation, setName, f.Function, this).VisitFunction(f.Block);
+                    MethodProcessResult processResult = new ShaderMethodVisitor(Compilation, setName, f.Function, this).VisitFunction(f.MethodDeclaration);
                     foreach (ResourceDefinition rd in processResult.ResourcesUsed)
                     {
                         resourcesUsed.Add(rd);
@@ -114,7 +112,7 @@ namespace ShaderGen.Glsl
             }
 
             MethodProcessResult result = new ShaderMethodVisitor(Compilation, setName, entryPoint.Function, this)
-                .VisitFunction(entryPoint.Block);
+                .VisitFunction(entryPoint.MethodDeclaration);
             foreach (ResourceDefinition rd in result.ResourcesUsed)
             {
                 resourcesUsed.Add(rd);
@@ -122,6 +120,12 @@ namespace ShaderGen.Glsl
             sb.AppendLine(result.FullText);
 
             WriteMainFunction(setName, sb, entryPoint.Function);
+
+            // Append version last because it relies on information from parsing the shader.
+            StringBuilder versionSB = new StringBuilder();
+            WriteVersionHeader(function, versionSB);
+
+            sb.Insert(0, versionSB.ToString());
 
             return new MethodProcessResult(sb.ToString(), resourcesUsed);
         }
@@ -360,6 +364,19 @@ namespace ShaderGen.Glsl
             return $"layout(local_size_x = {groupCounts.X}, local_size_y = {groupCounts.Y}, local_size_z = {groupCounts.Z}) in;";
         }
 
+        internal override string ParameterDirection(ParameterDirection direction)
+        {
+            switch (direction)
+            {
+                case ShaderGen.ParameterDirection.Out:
+                    return "out";
+                case ShaderGen.ParameterDirection.InOut:
+                    return "inout";
+                default:
+                    return string.Empty;
+            }
+        }
+
         private static readonly HashSet<string> s_glslKeywords = new HashSet<string>()
         {
             "input", "output",
@@ -369,6 +386,7 @@ namespace ShaderGen.Glsl
         protected abstract void WriteUniform(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteSampler(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteTexture2D(StringBuilder sb, ResourceDefinition rd);
+        protected abstract void WriteTexture2DArray(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteTextureCube(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteTexture2DMS(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteStructuredBuffer(StringBuilder sb, ResourceDefinition rd, bool isReadOnly);
@@ -381,5 +399,10 @@ namespace ShaderGen.Glsl
             string normalizedIdentifier,
             int index);
         protected abstract void EmitGlPositionCorrection(StringBuilder sb);
+
+        internal override string CorrectCastExpression(string type, string expression)
+        {
+            return $"{type}({expression})";
+        }
     }
 }

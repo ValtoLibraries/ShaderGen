@@ -21,6 +21,8 @@ namespace ShaderGen.Glsl
                 { "Pow", SimpleNameTranslator("pow") },
                 { "Acos", SimpleNameTranslator("acos") },
                 { "Cos", SimpleNameTranslator("cos") },
+                { "Ddx", SimpleNameTranslator("dFdx") },
+                { "Ddy", SimpleNameTranslator("dFdy") },
                 { "Frac", SimpleNameTranslator("fract") },
                 { "Lerp", SimpleNameTranslator("mix") },
                 { "Sin", SimpleNameTranslator("sin") },
@@ -28,7 +30,8 @@ namespace ShaderGen.Glsl
                 { "Clamp", SimpleNameTranslator("clamp") },
                 { "Mod", SimpleNameTranslator("mod") },
                 { "Mul", MatrixMul },
-                { "Sample", Sample2D },
+                { "Sample", Sample },
+                { "SampleGrad", SampleGrad },
                 { "Load", Load },
                 { "Discard", Discard },
                 { "Saturate", Saturate },
@@ -219,11 +222,15 @@ namespace ShaderGen.Glsl
             return $"{parameters[0].Identifier} * {parameters[1].Identifier}";
         }
 
-        private static string Sample2D(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        private static string Sample(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
             if (parameters[0].FullTypeName == "ShaderGen.Texture2DResource")
             {
                 return $"texture(sampler2D({parameters[0].Identifier}, {parameters[1].Identifier}), {parameters[2].Identifier})";
+            }
+            else if (parameters[0].FullTypeName == "ShaderGen.Texture2DArrayResource")
+            {
+                return $"texture(sampler2DArray({parameters[0].Identifier}, {parameters[1].Identifier}), vec3({parameters[2].Identifier}, {parameters[3].Identifier}))";
             }
             else if (parameters[0].FullTypeName == "ShaderGen.TextureCubeResource")
             {
@@ -235,9 +242,32 @@ namespace ShaderGen.Glsl
             }
         }
 
+        private static string SampleGrad(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            if (parameters[0].FullTypeName == "ShaderGen.Texture2DResource")
+            {
+                return $"textureGrad(sampler2D({parameters[0].Identifier}, {parameters[1].Identifier}), {parameters[2].Identifier}, {parameters[3].Identifier}, {parameters[4].Identifier})";
+            }
+            else if (parameters[0].FullTypeName == "ShaderGen.Texture2DArrayResource")
+            {
+                return $"textureGrad(sampler2DArray({parameters[0].Identifier}, {parameters[1].Identifier}), vec3({parameters[2].Identifier}, {parameters[3].Identifier}), {parameters[4].Identifier}, {parameters[5].Identifier})";
+            }
+            else
+            {
+                throw new NotImplementedException();
+            }
+        }
+
         private static string Load(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return $"texelFetch(sampler2DMS({parameters[0].Identifier}, {parameters[1].Identifier}), ivec2({parameters[2].Identifier}), {parameters[3].Identifier})";
+            if (parameters[0].FullTypeName == "ShaderGen.Texture2DResource")
+            {
+                return $"texelFetch(sampler2D({parameters[0].Identifier}, {parameters[1].Identifier}), ivec2({parameters[2].Identifier}), {parameters[3].Identifier})";
+            }
+            else
+            {
+                return $"texelFetch(sampler2DMS({parameters[0].Identifier}, {parameters[1].Identifier}), ivec2({parameters[2].Identifier}), {parameters[3].Identifier})";
+            }
         }
 
         private static string Discard(string typeName, string methodName, InvocationParameterInfo[] parameters)

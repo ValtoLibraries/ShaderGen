@@ -23,16 +23,16 @@ namespace ShaderGen
             _nodesByName.Add(rootMethod, _rootNode);
         }
 
-        public TypeAndMethodName[] GetOrderedCallList()
+        public ShaderFunctionAndMethodDeclarationSyntax[] GetOrderedCallList()
         {
-            HashSet<TypeAndMethodName> result = new HashSet<TypeAndMethodName>();
+            HashSet<ShaderFunctionAndMethodDeclarationSyntax> result = new HashSet<ShaderFunctionAndMethodDeclarationSyntax>();
             TraverseNode(result, _rootNode);
             return result.ToArray();
         }
 
-        private void TraverseNode(HashSet<TypeAndMethodName> result, CallGraphNode node)
+        private void TraverseNode(HashSet<ShaderFunctionAndMethodDeclarationSyntax> result, CallGraphNode node)
         {
-            foreach (TypeAndMethodName existing in result)
+            foreach (ShaderFunctionAndMethodDeclarationSyntax existing in result)
             {
                 if (node.Parents.Any(cgn => cgn.Name.Equals(existing)))
                 {
@@ -45,7 +45,9 @@ namespace ShaderGen
                 TraverseNode(result, child);
             }
 
-            result.Add(node.Name);
+            ShaderFunctionAndMethodDeclarationSyntax sfab = Utilities.GetShaderFunction(node.Declaration, Compilation, false);
+
+            result.Add(sfab);
         }
 
         public void GenerateFullGraph()
@@ -129,6 +131,11 @@ namespace ShaderGen
                 else if (node.Expression is MemberAccessExpressionSyntax maes)
                 {
                     SymbolInfo methodSymbol = _discoverer.Compilation.GetSemanticModel(maes.SyntaxTree).GetSymbolInfo(maes);
+                    if (methodSymbol.Symbol == null)
+                    {
+                        throw new ShaderGenerationException($"A member reference could not be identified: {node.Expression}");
+                    }
+
                     if (methodSymbol.Symbol is IMethodSymbol ims)
                     {
                         string containingType = Utilities.GetFullMetadataName(ims.ContainingType);

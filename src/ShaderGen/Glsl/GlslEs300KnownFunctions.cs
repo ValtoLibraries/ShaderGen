@@ -2,10 +2,11 @@
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using ShaderGen.Hlsl;
 
-namespace ShaderGen.Hlsl
+namespace ShaderGen.Glsl
 {
-    public static class HlslKnownFunctions
+    public static class GlslEs300KnownFunctions
     {
         private static Dictionary<string, TypeInvocationTranslator> s_mappings = GetMappings();
 
@@ -15,24 +16,24 @@ namespace ShaderGen.Hlsl
 
             Dictionary<string, InvocationTranslator> builtinMappings = new Dictionary<string, InvocationTranslator>()
             {
-                { "Mul", SimpleNameTranslator("mul") },
-                { "Saturate", SimpleNameTranslator("saturate") },
                 { "Abs", SimpleNameTranslator("abs") },
-                { "Cos", SimpleNameTranslator("cos") },
-                { "Ddx", SimpleNameTranslator("ddx") },
-                { "Ddy", SimpleNameTranslator("ddy") },
-                { "Frac", SimpleNameTranslator("frac") },
-                { "Lerp", SimpleNameTranslator("lerp") },
-                { "Pow", SimpleNameTranslator("pow") },
+                { "Pow", SimpleNameFloatParameterTranslator("pow") },
                 { "Acos", SimpleNameTranslator("acos") },
+                { "Cos", SimpleNameTranslator("cos") },
+                { "Ddx", SimpleNameTranslator("dFdx") },
+                { "Ddy", SimpleNameTranslator("dFdy") },
+                { "Frac", SimpleNameTranslator("fract") },
+                { "Lerp", SimpleNameTranslator("mix") },
                 { "Sin", SimpleNameTranslator("sin") },
                 { "Tan", SimpleNameTranslator("tan") },
-                { "Clamp", SimpleNameTranslator("clamp") },
-                { "Mod", SimpleNameTranslator("fmod") },
+                { "Clamp", SimpleNameFloatParameterTranslator("clamp") },
+                { "Mod", SimpleNameFloatParameterTranslator("mod") },
+                { "Mul", MatrixMul },
                 { "Sample", Sample },
                 { "SampleGrad", SampleGrad },
                 { "Load", Load },
                 { "Discard", Discard },
+                { "Saturate", Saturate },
                 { nameof(ShaderBuiltins.ClipToTextureCoordinates), ClipToTextureCoordinates },
                 { "VertexID", VertexID },
                 { "InstanceID", InstanceID },
@@ -52,7 +53,7 @@ namespace ShaderGen.Hlsl
                 { "DistanceSquared", DistanceSquared },
                 { "Divide", BinaryOpTranslator("/") },
                 { "Dot", SimpleNameTranslator("dot") },
-                { "Lerp", SimpleNameTranslator("lerp") },
+                { "Lerp", SimpleNameTranslator("mix") },
                 { "Max", SimpleNameTranslator("max") },
                 { "Min", SimpleNameTranslator("min") },
                 { "Multiply", BinaryOpTranslator("*") },
@@ -69,7 +70,7 @@ namespace ShaderGen.Hlsl
                 { "One", VectorStaticAccessor },
                 { "UnitX", VectorStaticAccessor },
                 { "UnitY", VectorStaticAccessor },
-                { "Transform", Vector2Transform },
+                { "Transform", Vector2Transform }
             };
             ret.Add("System.Numerics.Vector2", new DictionaryTypeInvocationTranslator(v2Mappings));
 
@@ -84,7 +85,7 @@ namespace ShaderGen.Hlsl
                 { "DistanceSquared", DistanceSquared },
                 { "Divide", BinaryOpTranslator("/") },
                 { "Dot", SimpleNameTranslator("dot") },
-                { "Lerp", SimpleNameTranslator("lerp") },
+                { "Lerp", SimpleNameTranslator("mix") },
                 { "Max", SimpleNameTranslator("max") },
                 { "Min", SimpleNameTranslator("min") },
                 { "Multiply", BinaryOpTranslator("*") },
@@ -102,7 +103,7 @@ namespace ShaderGen.Hlsl
                 { "UnitX", VectorStaticAccessor },
                 { "UnitY", VectorStaticAccessor },
                 { "UnitZ", VectorStaticAccessor },
-                { "Transform", Vector3Transform },
+                { "Transform", Vector3Transform }
             };
             ret.Add("System.Numerics.Vector3", new DictionaryTypeInvocationTranslator(v3Mappings));
 
@@ -116,7 +117,7 @@ namespace ShaderGen.Hlsl
                 { "DistanceSquared", DistanceSquared },
                 { "Divide", BinaryOpTranslator("/") },
                 { "Dot", SimpleNameTranslator("dot") },
-                { "Lerp", SimpleNameTranslator("lerp") },
+                { "Lerp", SimpleNameTranslator("mix") },
                 { "Max", SimpleNameTranslator("max") },
                 { "Min", SimpleNameTranslator("min") },
                 { "Multiply", BinaryOpTranslator("*") },
@@ -135,7 +136,7 @@ namespace ShaderGen.Hlsl
                 { "UnitY", VectorStaticAccessor },
                 { "UnitZ", VectorStaticAccessor },
                 { "UnitW", VectorStaticAccessor },
-                { "Transform", Vector4Transform },
+                { "Transform", Vector4Transform }
             };
             ret.Add("System.Numerics.Vector4", new DictionaryTypeInvocationTranslator(v4Mappings));
 
@@ -150,7 +151,7 @@ namespace ShaderGen.Hlsl
                 { "Cos", SimpleNameTranslator("cos") },
                 { "Max", SimpleNameTranslator("max") },
                 { "Min", SimpleNameTranslator("min") },
-                { "Pow", SimpleNameTranslator("pow") },
+                { "Pow", SimpleNameFloatParameterTranslator("pow") },
                 { "Sin", SimpleNameTranslator("sin") },
             };
             ret.Add("System.MathF", new DictionaryTypeInvocationTranslator(mathfMappings));
@@ -158,6 +159,58 @@ namespace ShaderGen.Hlsl
             ret.Add("ShaderGen.ShaderSwizzle", new SwizzleTranslator());
 
             return ret;
+        }
+
+        private static string MatrixCtor(string typeName, string methodName, InvocationParameterInfo[] p)
+        {
+            string paramList = string.Join(", ",
+                p[0].Identifier, p[4].Identifier, p[8].Identifier, p[12].Identifier,
+                p[1].Identifier, p[5].Identifier, p[9].Identifier, p[13].Identifier,
+                p[2].Identifier, p[6].Identifier, p[10].Identifier, p[14].Identifier,
+                p[3].Identifier, p[7].Identifier, p[11].Identifier, p[15].Identifier);
+
+            return $"mat4({paramList})";
+        }
+
+        public static string TranslateInvocation(string type, string method, InvocationParameterInfo[] parameters)
+        {
+            if (s_mappings.TryGetValue(type, out var dict))
+            {
+                if (dict.GetTranslator(method, parameters, out InvocationTranslator mappedValue))
+                {
+                    return mappedValue(type, method, parameters);
+                }
+            }
+
+            throw new ShaderGenerationException($"Reference to unknown function: {type}.{method}");
+        }
+
+        private static InvocationTranslator SimpleNameTranslator(string nameTarget)
+        {
+            return (type, method, parameters) =>
+            {
+                return $"{nameTarget}({InvocationParameterInfo.GetInvocationParameterList(parameters)})";
+            };
+        }
+
+        private static InvocationTranslator SimpleNameFloatParameterTranslator(string nameTarget)
+        {
+            return (type, method, parameters) =>
+            {
+                IEnumerable<string> castedParams = parameters.Select(ipi =>
+                {
+                    if (ipi.FullTypeName == "float" || ipi.FullTypeName == "int" || ipi.FullTypeName == "uint")
+                    {
+                        return $"float({ipi.Identifier})";
+                    }
+                    else
+                    {
+                        return ipi.Identifier;
+                    }
+
+                });
+                return $"{nameTarget}({string.Join(", ", castedParams)})";
+            };
         }
 
         private static string LengthSquared(string typeName, string methodName, InvocationParameterInfo[] parameters)
@@ -175,30 +228,6 @@ namespace ShaderGen.Hlsl
             return $"dot({parameters[0].Identifier} - {parameters[1].Identifier}, {parameters[0].Identifier} - {parameters[1].Identifier})";
         }
 
-        private static string MatrixCtor(string typeName, string methodName, InvocationParameterInfo[] p)
-        {
-            string paramList = string.Join(", ",
-                p[0].Identifier, p[1].Identifier, p[2].Identifier, p[3].Identifier,
-                p[4].Identifier, p[5].Identifier, p[6].Identifier, p[7].Identifier,
-                p[8].Identifier, p[9].Identifier, p[10].Identifier, p[11].Identifier,
-                p[12].Identifier, p[13].Identifier, p[14].Identifier, p[15].Identifier);
-
-            return $"{{ {paramList} }}";
-        }
-
-        public static string TranslateInvocation(string type, string method, InvocationParameterInfo[] parameters)
-        {
-            if (s_mappings.TryGetValue(type, out var dict))
-            {
-                if (dict.GetTranslator(method, parameters, out InvocationTranslator mappedValue))
-                {
-                    return mappedValue(type, method, parameters);
-                }
-            }
-
-            throw new ShaderGenerationException($"Reference to unknown function: {type}.{method}");
-        }
-
         private static InvocationTranslator BinaryOpTranslator(string op)
         {
             return (type, method, parameters) =>
@@ -207,23 +236,20 @@ namespace ShaderGen.Hlsl
             };
         }
 
-        private static InvocationTranslator SimpleNameTranslator(string nameTarget)
+        private static string MatrixMul(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return (type, method, parameters) =>
-            {
-                return $"{nameTarget}({InvocationParameterInfo.GetInvocationParameterList(parameters)})";
-            };
+            return $"{parameters[0].Identifier} * {parameters[1].Identifier}";
         }
 
         private static string Sample(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
             if (parameters[0].FullTypeName == "ShaderGen.Texture2DArrayResource")
             {
-                return $"{parameters[0].Identifier}.Sample({parameters[1].Identifier}, float3({parameters[2].Identifier}, {parameters[3].Identifier}))";
+                return $"texture({parameters[0].Identifier}, vec3({parameters[2].Identifier}, {parameters[3].Identifier}))";
             }
             else
             {
-                return $"{parameters[0].Identifier}.Sample({parameters[1].Identifier}, {parameters[2].Identifier})";
+                return $"texture({parameters[0].Identifier}, {parameters[2].Identifier})";
             }
         }
 
@@ -231,24 +257,17 @@ namespace ShaderGen.Hlsl
         {
             if (parameters[0].FullTypeName == "ShaderGen.Texture2DArrayResource")
             {
-                return $"{parameters[0].Identifier}.SampleGrad({parameters[1].Identifier}, float3({parameters[2].Identifier}, {parameters[3].Identifier}), {parameters[4].Identifier}, {parameters[5].Identifier})";
+                return $"textureGrad({parameters[0].Identifier}, vec3({parameters[2].Identifier}, {parameters[3].Identifier}), {parameters[4].Identifier}, {parameters[5].Identifier})";
             }
             else
             {
-                return $"{parameters[0].Identifier}.SampleGrad({parameters[1].Identifier}, {parameters[2].Identifier}, {parameters[3].Identifier}, {parameters[4].Identifier})";
+                return $"textureGrad({parameters[0].Identifier}, {parameters[2].Identifier}, {parameters[3].Identifier}, {parameters[4].Identifier})";
             }
         }
 
         private static string Load(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            if (parameters[0].FullTypeName == "ShaderGen.Texture2DResource")
-            {
-                return $"{parameters[0].Identifier}.Load(int3({parameters[2].Identifier}, {parameters[3].Identifier}))";
-            }
-            else
-            {
-                return $"{parameters[0].Identifier}.Load({parameters[2].Identifier}, {parameters[3].Identifier})";
-            }
+            return $"texelFetch({parameters[0].Identifier}, ivec2({parameters[2].Identifier}), {parameters[3].Identifier})";
         }
 
         private static string Discard(string typeName, string methodName, InvocationParameterInfo[] parameters)
@@ -256,35 +275,47 @@ namespace ShaderGen.Hlsl
             return $"discard;";
         }
 
+        private static string Saturate(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            if (parameters.Length == 1)
+            {
+                return $"clamp({parameters[0].Identifier}, 0.f, 1.f)";
+            }
+            else
+            {
+                throw new ShaderGenerationException("Unhandled number of arguments to ShaderBuiltins.Discard.");
+            }
+        }
+
         private static string ClipToTextureCoordinates(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
             string target = parameters[0].Identifier;
-            return $"float2(({target}.x / {target}.w) / 2 + 0.5, ({target}.y / {target}.w) / -2 + 0.5)";
+            return $"vec2(({target}.x / {target}.w) / 2.f + 0.5f, ({target}.y / {target}.w) / 2.f + 0.5f)";
         }
 
         private static string VertexID(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return "_builtins_VertexID";
+            return "uint(gl_VertexID)";
         }
 
         private static string InstanceID(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return "_builtins_InstanceID";
+            return "uint(gl_InstanceID)";
         }
 
         private static string DispatchThreadID(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return "_builtins_DispatchThreadID";
+            return "gl_GlobalInvocationID";
         }
 
         private static string GroupThreadID(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return "_builtins_GroupThreadID";
+            return "gl_LocalInvocationID";
         }
 
         private static string IsFrontFace(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return "_builtins_IsFrontFace";
+            return "gl_FrontFacing";
         }
 
         private static string VectorCtor(string typeName, string methodName, InvocationParameterInfo[] parameters)
@@ -367,12 +398,12 @@ namespace ShaderGen.Hlsl
 
         private static string Vector2Transform(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return $"mul({parameters[1].Identifier}, float4({parameters[0].Identifier}, 0, 1)).xy";
+            return $"({parameters[1].Identifier} * vec4({parameters[0].Identifier}, 0.f, 1.f)).xy";
         }
 
         private static string Vector3Transform(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return $"mul({parameters[1].Identifier}, float4({parameters[0].Identifier}, 1)).xyz";
+            return $"({parameters[1].Identifier} * vec4({parameters[0].Identifier}, 1.f)).xyz";
         }
 
         private static string Vector4Transform(string typeName, string methodName, InvocationParameterInfo[] parameters)
@@ -380,28 +411,26 @@ namespace ShaderGen.Hlsl
             string vecParam;
             if (parameters[0].FullTypeName == "System.Numerics.Vector2")
             {
-                vecParam = $"float4({parameters[0].Identifier}, 0, 1)";
+                vecParam = $"vec4({parameters[0].Identifier}, 0.f, 1.f)";
             }
             else if (parameters[0].FullTypeName == "System.Numerics.Vector3")
             {
-                vecParam = $"float4({parameters[0].Identifier}, 1)";
+                vecParam = $"vec4({parameters[0].Identifier}, 1.f)";
             }
             else
             {
                 vecParam = parameters[0].Identifier;
             }
 
-            return $"mul({parameters[1].Identifier}, {vecParam})";
+            return $"{parameters[1].Identifier} * {vecParam}";
         }
 
         private static void GetVectorTypeInfo(string name, out string shaderType, out int elementCount)
         {
-            if (name == "System.Numerics.Vector2") { shaderType = "float2"; elementCount = 2; }
-            else if (name == "System.Numerics.Vector3") { shaderType = "float3"; elementCount = 3; }
-            else if (name == "System.Numerics.Vector4") { shaderType = "float4"; elementCount = 4; }
+            if (name == "System.Numerics.Vector2") { shaderType = "vec2"; elementCount = 2; }
+            else if (name == "System.Numerics.Vector3") { shaderType = "vec3"; elementCount = 3; }
+            else if (name == "System.Numerics.Vector4") { shaderType = "vec4"; elementCount = 4; }
             else { throw new ShaderGenerationException("VectorCtor translator was called on an invalid type: " + name); }
         }
     }
-
-    public delegate string InvocationTranslator(string typeName, string methodName, InvocationParameterInfo[] parameters);
 }

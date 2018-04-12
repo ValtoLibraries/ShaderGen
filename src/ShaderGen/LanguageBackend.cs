@@ -15,7 +15,7 @@ namespace ShaderGen
         {
             internal List<StructureDefinition> Structures { get; } = new List<StructureDefinition>();
             internal List<ResourceDefinition> Resources { get; } = new List<ResourceDefinition>();
-            internal List<ShaderFunctionAndBlockSyntax> Functions { get; } = new List<ShaderFunctionAndBlockSyntax>();
+            internal List<ShaderFunctionAndMethodDeclarationSyntax> Functions { get; } = new List<ShaderFunctionAndMethodDeclarationSyntax>();
         }
 
         internal Dictionary<string, BackendContext> Contexts = new Dictionary<string, BackendContext>();
@@ -75,7 +75,7 @@ namespace ShaderGen
             ResourceDefinition[] computeResources = null;
 
             // HACK: Discover all method input structures.
-            foreach (ShaderFunctionAndBlockSyntax sf in context.Functions.ToArray())
+            foreach (ShaderFunctionAndMethodDeclarationSyntax sf in context.Functions.ToArray())
             {
                 if (sf.Function.IsEntryPoint)
                 {
@@ -104,6 +104,14 @@ namespace ShaderGen
                 vertexResources,
                 fragmentResources,
                 computeResources);
+        }
+
+        internal virtual string CorrectAssignedValue(
+            string leftExprType,
+            string rightExpr,
+            string rightExprType)
+        {
+            return rightExpr;
         }
 
         private void ForceTypeDiscovery(string setName, TypeReference fd)
@@ -185,14 +193,19 @@ namespace ShaderGen
             GetContext(setName).Resources.Add(rd);
         }
 
-        internal virtual void AddFunction(string setName, ShaderFunctionAndBlockSyntax sf)
+        internal virtual void AddFunction(string setName, ShaderFunctionAndMethodDeclarationSyntax sf)
         {
             if (sf == null)
             {
                 throw new ArgumentNullException(nameof(sf));
             }
 
-            GetContext(setName).Functions.Add(sf);
+            var context = GetContext(setName);
+
+            if (!context.Functions.Contains(sf))
+            {
+                context.Functions.Add(sf);
+            }
         }
 
         internal virtual string CSharpToShaderIdentifierName(SymbolInfo symbolInfo)
@@ -210,11 +223,20 @@ namespace ShaderGen
             Debug.Assert(method != null);
             Debug.Assert(parameterInfos != null);
 
-            ShaderFunctionAndBlockSyntax function = GetContext(setName).Functions
-                .SingleOrDefault(sfabs => sfabs.Function.DeclaringType == type && sfabs.Function.Name == method);
+            ShaderFunctionAndMethodDeclarationSyntax function = GetContext(setName).Functions
+                .SingleOrDefault(
+                    sfabs => sfabs.Function.DeclaringType == type && sfabs.Function.Name == method
+                        && parameterInfos.Length == sfabs.Function.Parameters.Length);
             if (function != null)
             {
-                string invocationList = string.Join(", ", parameterInfos.Select(ipi => CSharpToIdentifierNameCore(ipi.FullTypeName, ipi.Identifier)));
+                ParameterDefinition[] funcParameters = function.Function.Parameters;
+                string[] formattedParams = new string[funcParameters.Length];
+                for (int i = 0; i < formattedParams.Length; i++)
+                {
+                    formattedParams[i] = FormatInvocationParameter(funcParameters[i], parameterInfos[i]);
+                }
+
+                string invocationList = string.Join(", ", formattedParams);
                 string fullMethodName = CSharpToShaderType(function.Function.DeclaringType) + "_" + function.Function.Name;
                 return $"{fullMethodName}({invocationList})";
             }
@@ -222,6 +244,11 @@ namespace ShaderGen
             {
                 return FormatInvocationCore(setName, type, method, parameterInfos);
             }
+        }
+
+        protected virtual string FormatInvocationParameter(ParameterDefinition def, InvocationParameterInfo ipi)
+        {
+            return CSharpToIdentifierNameCore(ipi.FullTypeName, ipi.Identifier);
         }
 
         protected void ValidateRequiredSemantics(string setName, ShaderFunction function, ShaderFunctionType type)
@@ -268,6 +295,16 @@ namespace ShaderGen
             return result;
         }
 
+        internal virtual string CorrectBinaryExpression(
+            string leftExpr,
+            string leftExprType,
+            string operatorToken,
+            string rightExpr,
+            string rightExprType)
+        {
+            return $"{leftExpr} {operatorToken} {rightExpr}";
+        }
+
         internal virtual string CorrectFieldAccess(SymbolInfo symbolInfo)
         {
             string mapped = CSharpToShaderIdentifierName(symbolInfo);
@@ -304,7 +341,7 @@ namespace ShaderGen
 
         internal string CorrectLiteral(string literal)
         {
-            if (literal.EndsWith("f", StringComparison.OrdinalIgnoreCase))
+            if (!literal.StartsWith("0x", StringComparison.OrdinalIgnoreCase) && literal.EndsWith("f", StringComparison.OrdinalIgnoreCase))
             {
                 if (!literal.Contains("."))
                 {
@@ -314,6 +351,13 @@ namespace ShaderGen
             }
 
             return literal;
+        }
+
+        internal abstract string ParameterDirection(ParameterDirection direction);
+
+        internal virtual string CorrectCastExpression(string type, string expression)
+        {
+            return $"({type}) {expression}";
         }
     }
 }

@@ -11,6 +11,17 @@ namespace ShaderGen
             => throw new ShaderBuiltinException();
         public static Vector4 Sample(TextureCubeResource texture, SamplerResource sampler, Vector3 texCoords)
             => throw new ShaderBuiltinException();
+        public static Vector4 Sample(Texture2DArrayResource texture, SamplerResource sampler, Vector2 texCoords, uint arrayLayer)
+            => throw new ShaderBuiltinException();
+        public static Vector4 SampleGrad(Texture2DResource texture, SamplerResource sampler, Vector2 texCoords, Vector2 ddx, Vector2 ddy)
+            => throw new ShaderBuiltinException();
+        public static Vector4 SampleGrad(Texture2DArrayResource texture, SamplerResource sampler, Vector2 texCoords, uint arrayLayer, Vector2 ddx, Vector2 ddy)
+            => throw new ShaderBuiltinException();
+        public static Vector4 Load(
+            Texture2DResource texture,
+            SamplerResource sampler,
+            Vector2 texCoords,
+            uint lod) => throw new ShaderBuiltinException();
         public static Vector4 Load(
             Texture2DMSResource texture,
             SamplerResource sampler,
@@ -42,6 +53,18 @@ namespace ShaderGen
         public static Vector2 Cos(Vector2 value) => throw new ShaderBuiltinException();
         public static Vector3 Cos(Vector3 value) => throw new ShaderBuiltinException();
         public static Vector4 Cos(Vector4 value) => throw new ShaderBuiltinException();
+
+        // Ddx
+        public static float Ddx(float value) => throw new ShaderBuiltinException();
+        public static Vector2 Ddx(Vector2 value) => throw new ShaderBuiltinException();
+        public static Vector3 Ddx(Vector3 value) => throw new ShaderBuiltinException();
+        public static Vector4 Ddx(Vector4 value) => throw new ShaderBuiltinException();
+
+        // Ddy
+        public static float Ddy(float value) => throw new ShaderBuiltinException();
+        public static Vector2 Ddy(Vector2 value) => throw new ShaderBuiltinException();
+        public static Vector3 Ddy(Vector3 value) => throw new ShaderBuiltinException();
+        public static Vector4 Ddy(Vector4 value) => throw new ShaderBuiltinException();
 
         // Frac
         public static float Frac(float value) => throw new ShaderBuiltinException();
