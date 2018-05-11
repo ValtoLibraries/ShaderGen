@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text;
 
 namespace ShaderGen
 {
@@ -120,6 +121,17 @@ namespace ShaderGen
             {
                 return;
             }
+            if (fd.TypeInfo.Type.TypeKind == TypeKind.Enum)
+            {
+                INamedTypeSymbol enumBaseType = ((INamedTypeSymbol) fd.TypeInfo.Type).EnumUnderlyingType;
+                if (enumBaseType != null
+                    && enumBaseType.SpecialType != SpecialType.System_Int32
+                    && enumBaseType.SpecialType != SpecialType.System_UInt32)
+                {
+                    throw new ShaderGenerationException("Resource type's field had an invalid enum base type: " + enumBaseType.ToDisplayString());
+                }
+                return;
+            }
             if (!TryDiscoverStructure(setName, fd.Name, out StructureDefinition sd))
             {
                 throw new ShaderGenerationException("" +
@@ -150,6 +162,26 @@ namespace ShaderGen
             }
 
             return result;
+        }
+
+        internal string CSharpToShaderType(TypeReference typeReference)
+        {
+            if (typeReference == null)
+            {
+                throw new ArgumentNullException(nameof(typeReference));
+            }
+
+            string typeNameString;
+            if (typeReference.TypeInfo.Type.TypeKind == TypeKind.Enum)
+            {
+                typeNameString = Utilities.GetFullName(((INamedTypeSymbol) typeReference.TypeInfo.Type).EnumUnderlyingType);
+            }
+            else
+            {
+                typeNameString = typeReference.Name.Trim();
+            }
+
+            return CSharpToShaderTypeCore(typeNameString);
         }
 
         internal string CSharpToShaderType(string fullType)
@@ -358,6 +390,41 @@ namespace ShaderGen
         internal virtual string CorrectCastExpression(string type, string expression)
         {
             return $"({type}) {expression}";
+        }
+
+        protected virtual ShaderMethodVisitor VisitShaderMethod(string setName, ShaderFunction func)
+        {
+            return new ShaderMethodVisitor(Compilation, setName, func, this);
+        }
+
+        protected HashSet<ResourceDefinition> ProcessFunctions(string setName, ShaderFunctionAndMethodDeclarationSyntax entryPoint, out string funcs, out string entry)
+        {
+            HashSet<ResourceDefinition> resourcesUsed = new HashSet<ResourceDefinition>();
+            StringBuilder sb = new StringBuilder();
+
+            foreach (ShaderFunctionAndMethodDeclarationSyntax f in entryPoint.OrderedFunctionList)
+            {
+                if (!f.Function.IsEntryPoint)
+                {
+                    MethodProcessResult processResult = VisitShaderMethod(setName, f.Function).VisitFunction(f.MethodDeclaration);
+                    foreach (ResourceDefinition rd in processResult.ResourcesUsed)
+                    {
+                        resourcesUsed.Add(rd);
+                    }
+                    sb.AppendLine(processResult.FullText);
+                }
+            }
+            funcs = sb.ToString();
+
+            MethodProcessResult result = VisitShaderMethod(setName, entryPoint.Function).VisitFunction(entryPoint.MethodDeclaration);
+            foreach (ResourceDefinition rd in result.ResourcesUsed)
+            {
+                resourcesUsed.Add(rd);
+            }
+
+            entry = result.FullText;
+
+            return resourcesUsed;
         }
     }
 }

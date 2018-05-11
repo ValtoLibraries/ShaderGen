@@ -19,16 +19,24 @@ namespace ShaderGen.Glsl
 
         protected override void WriteVersionHeader(ShaderFunction function, StringBuilder sb)
         {
-            string version = function.Type == ShaderFunctionType.ComputeEntryPoint ? "430" : "330 core";
+            string version = (function.Type == ShaderFunctionType.ComputeEntryPoint
+                           || function.UsesStructuredBuffer) ? "430" : "330 core";
             sb.AppendLine($"#version {version}");
             sb.AppendLine();
             sb.AppendLine($"struct SamplerDummy {{ int _dummyValue; }};");
+            sb.AppendLine($"struct SamplerComparisonDummy {{ int _dummyValue; }};");
             sb.AppendLine();
         }
 
         protected override void WriteSampler(StringBuilder sb, ResourceDefinition rd)
         {
-            sb.AppendLine($"const SamplerDummy {CorrectIdentifier(rd.Name)} = SamplerDummy(0);");
+            sb.AppendLine($"SamplerDummy {CorrectIdentifier(rd.Name)} = SamplerDummy(0);");
+            sb.AppendLine();
+        }
+
+        protected override void WriteSamplerComparison(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.AppendLine($"SamplerComparisonDummy {CorrectIdentifier(rd.Name)} = SamplerComparisonDummy(0);");
             sb.AppendLine();
         }
 
@@ -56,6 +64,18 @@ namespace ShaderGen.Glsl
             sb.AppendLine();
         }
 
+        protected override void WriteDepthTexture2D(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.AppendLine($"uniform sampler2DShadow {CorrectIdentifier(rd.Name)};");
+            sb.AppendLine();
+        }
+
+        protected override void WriteDepthTexture2DArray(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.AppendLine($"uniform sampler2DArrayShadow {CorrectIdentifier(rd.Name)};");
+            sb.AppendLine();
+        }
+
         protected override void WriteUniform(StringBuilder sb, ResourceDefinition rd)
         {
             sb.AppendLine($"layout(std140) uniform {rd.Name}");
@@ -72,6 +92,13 @@ namespace ShaderGen.Glsl
             sb.AppendLine("{");
             sb.AppendLine($"    {CSharpToShaderType(rd.ValueType.Name)} field_{CorrectIdentifier(rd.Name.Trim())}[];");
             sb.AppendLine("};");
+        }
+
+        protected override void WriteRWTexture2D(StringBuilder sb, ResourceDefinition rd)
+        {
+            string layoutType = "rgba32f"; // TODO: Support other types ?
+            sb.AppendLine($"layout({layoutType}) uniform image2D {CorrectIdentifier(rd.Name)};");
+            sb.AppendLine();
         }
 
         protected override string FormatInvocationCore(string setName, string type, string method, InvocationParameterInfo[] parameterInfos)

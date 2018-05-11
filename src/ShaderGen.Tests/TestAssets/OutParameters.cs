@@ -18,6 +18,12 @@ namespace TestShaders
             Vector2 zw;
             MyFunc(input.Position, ref xy, out zw);
 
+            MyFunc(input.Position, ref xy, out var zw2);
+            zw += zw2;
+
+            MyFunc(input.Position, ref xy, out _);
+            MyFunc(input.Position, ref xy, out _);
+
             SystemPosition4 output;
             output.Position.X = xy.X;
             output.Position.Y = xy.Y;

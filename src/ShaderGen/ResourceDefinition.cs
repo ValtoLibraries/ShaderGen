@@ -1,4 +1,7 @@
-﻿namespace ShaderGen
+﻿using System.Collections.Generic;
+using Microsoft.CodeAnalysis;
+
+namespace ShaderGen
 {
     public class ResourceDefinition
     {

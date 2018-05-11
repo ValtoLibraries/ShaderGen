@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
@@ -42,14 +43,13 @@ namespace ShaderGen.Glsl
 
         protected virtual string GetStructureFieldType(FieldDefinition field)
         {
-            return CSharpToShaderType(field.Type.Name.Trim());
+            return CSharpToShaderType(field.Type);
         }
 
         protected override MethodProcessResult GenerateFullTextCore(string setName, ShaderFunction function)
         {
             BackendContext context = GetContext(setName);
             StringBuilder sb = new StringBuilder();
-            HashSet<ResourceDefinition> resourcesUsed = new HashSet<ResourceDefinition>();
 
             ShaderFunctionAndMethodDeclarationSyntax entryPoint = context.Functions.SingleOrDefault(
                 sfabs => sfabs.Function.Name == function.Name);
@@ -68,8 +68,16 @@ namespace ShaderGen.Glsl
                 WriteStructure(sb, sd);
             }
 
+            HashSet<ResourceDefinition> resourcesUsed
+                = ProcessFunctions(setName, entryPoint, out string funcStr, out string entryStr);
+
             foreach (ResourceDefinition rd in context.Resources)
             {
+                if (!resourcesUsed.Contains(rd))
+                {
+                    continue;
+                }
+
                 switch (rd.ResourceKind)
                 {
                     case ShaderResourceKind.Uniform:
@@ -86,38 +94,34 @@ namespace ShaderGen.Glsl
                         break;
                     case ShaderResourceKind.Texture2DMS:
                         WriteTexture2DMS(sb, rd);
+                        function.UsesTexture2DMS = true;
                         break;
                     case ShaderResourceKind.Sampler:
                         WriteSampler(sb, rd);
                         break;
+                    case ShaderResourceKind.SamplerComparison:
+                        WriteSamplerComparison(sb, rd);
+                        break;
                     case ShaderResourceKind.StructuredBuffer:
                     case ShaderResourceKind.RWStructuredBuffer:
                         WriteStructuredBuffer(sb, rd, rd.ResourceKind == ShaderResourceKind.StructuredBuffer);
+                        function.UsesStructuredBuffer = true;
+                        break;
+                    case ShaderResourceKind.RWTexture2D:
+                        WriteRWTexture2D(sb, rd);
+                        break;
+                    case ShaderResourceKind.DepthTexture2D:
+                        WriteDepthTexture2D(sb, rd);
+                        break;
+                    case ShaderResourceKind.DepthTexture2DArray:
+                        WriteDepthTexture2DArray(sb, rd);
                         break;
                     default: throw new ShaderGenerationException("Illegal resource kind: " + rd.ResourceKind);
                 }
             }
 
-            foreach (ShaderFunctionAndMethodDeclarationSyntax f in entryPoint.OrderedFunctionList)
-            {
-                if (!f.Function.IsEntryPoint)
-                {
-                    MethodProcessResult processResult = new ShaderMethodVisitor(Compilation, setName, f.Function, this).VisitFunction(f.MethodDeclaration);
-                    foreach (ResourceDefinition rd in processResult.ResourcesUsed)
-                    {
-                        resourcesUsed.Add(rd);
-                    }
-                    sb.AppendLine(processResult.FullText);
-                }
-            }
-
-            MethodProcessResult result = new ShaderMethodVisitor(Compilation, setName, entryPoint.Function, this)
-                .VisitFunction(entryPoint.MethodDeclaration);
-            foreach (ResourceDefinition rd in result.ResourcesUsed)
-            {
-                resourcesUsed.Add(rd);
-            }
-            sb.AppendLine(result.FullText);
+            sb.AppendLine(funcStr);
+            sb.AppendLine(entryStr);
 
             WriteMainFunction(setName, sb, entryPoint.Function);
 
@@ -385,11 +389,15 @@ namespace ShaderGen.Glsl
         protected abstract void WriteVersionHeader(ShaderFunction function, StringBuilder sb);
         protected abstract void WriteUniform(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteSampler(StringBuilder sb, ResourceDefinition rd);
+        protected abstract void WriteSamplerComparison(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteTexture2D(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteTexture2DArray(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteTextureCube(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteTexture2DMS(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteStructuredBuffer(StringBuilder sb, ResourceDefinition rd, bool isReadOnly);
+        protected abstract void WriteRWTexture2D(StringBuilder sb, ResourceDefinition rd);
+        protected abstract void WriteDepthTexture2D(StringBuilder sb, ResourceDefinition rd);
+        protected abstract void WriteDepthTexture2DArray(StringBuilder sb, ResourceDefinition rd);
 
         protected abstract void WriteInOutVariable(
             StringBuilder sb,

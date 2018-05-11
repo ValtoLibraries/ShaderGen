@@ -21,16 +21,21 @@ namespace ShaderGen.Glsl
                 { "Acos", SimpleNameTranslator("acos") },
                 { "Cos", SimpleNameTranslator("cos") },
                 { "Ddx", SimpleNameTranslator("dFdx") },
+                { "DdxFine", SimpleNameTranslator("dFdx") },
                 { "Ddy", SimpleNameTranslator("dFdy") },
+                { "DdyFine", SimpleNameTranslator("dFdy") },
+                { "Floor", SimpleNameTranslator("floor") },
                 { "Frac", SimpleNameTranslator("fract") },
                 { "Lerp", SimpleNameTranslator("mix") },
                 { "Sin", SimpleNameTranslator("sin") },
+                { "SmoothStep", SimpleNameTranslator("smoothstep") },
                 { "Tan", SimpleNameTranslator("tan") },
                 { "Clamp", SimpleNameFloatParameterTranslator("clamp") },
                 { "Mod", SimpleNameFloatParameterTranslator("mod") },
                 { "Mul", MatrixMul },
                 { "Sample", Sample },
                 { "SampleGrad", SampleGrad },
+                { "SampleComparisonLevelZero", SampleComparisonLevelZero },
                 { "Load", Load },
                 { "Discard", Discard },
                 { "Saturate", Saturate },
@@ -153,10 +158,18 @@ namespace ShaderGen.Glsl
                 { "Min", SimpleNameTranslator("min") },
                 { "Pow", SimpleNameFloatParameterTranslator("pow") },
                 { "Sin", SimpleNameTranslator("sin") },
+                { "Sqrt", SimpleNameTranslator("sqrt") },
             };
             ret.Add("System.MathF", new DictionaryTypeInvocationTranslator(mathfMappings));
 
             ret.Add("ShaderGen.ShaderSwizzle", new SwizzleTranslator());
+
+            Dictionary<string, InvocationTranslator> vectorExtensionMappings = new Dictionary<string, InvocationTranslator>()
+            {
+                { nameof(VectorExtensions.GetComponent), VectorGetComponent },
+                { nameof(VectorExtensions.SetComponent), VectorSetComponent },
+            };
+            ret.Add("ShaderGen.VectorExtensions", new DictionaryTypeInvocationTranslator(vectorExtensionMappings));
 
             return ret;
         }
@@ -170,6 +183,16 @@ namespace ShaderGen.Glsl
                 p[3].Identifier, p[7].Identifier, p[11].Identifier, p[15].Identifier);
 
             return $"mat4({paramList})";
+        }
+
+        private static string VectorGetComponent(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"{parameters[0].Identifier}[{parameters[1].Identifier}]";
+        }
+
+        private static string VectorSetComponent(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"{parameters[0].Identifier}[{parameters[1].Identifier}] = {parameters[2].Identifier}";
         }
 
         public static string TranslateInvocation(string type, string method, InvocationParameterInfo[] parameters)
@@ -262,6 +285,18 @@ namespace ShaderGen.Glsl
             else
             {
                 return $"textureGrad({parameters[0].Identifier}, {parameters[2].Identifier}, {parameters[3].Identifier}, {parameters[4].Identifier})";
+            }
+        }
+
+        private static string SampleComparisonLevelZero(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            if (parameters[0].FullTypeName == "ShaderGen.DepthTexture2DArrayResource")
+            {
+                return $"textureGrad({parameters[0].Identifier}, vec4({parameters[2].Identifier}, {parameters[3].Identifier}, {parameters[4].Identifier}), vec2(0.0), vec2(0.0))";
+            }
+            else
+            {
+                return $"textureLod({parameters[0].Identifier}, vec3({parameters[2].Identifier}, {parameters[3].Identifier}), 0.0)";
             }
         }
 

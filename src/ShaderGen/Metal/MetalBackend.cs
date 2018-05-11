@@ -13,19 +13,11 @@ namespace ShaderGen.Metal
         {
         }
 
-        private string CSharpToShaderTypeCore(string fullType, bool packed)
-        {
-            string mapped = packed
-                ? MetalKnownTypes.GetPackedName(fullType)
-                : MetalKnownTypes.GetMappedName(fullType);
-            return mapped
-                .Replace(".", "_")
-                .Replace("+", "_");
-        }
-
         protected override string CSharpToShaderTypeCore(string fullType)
         {
-            return CSharpToShaderTypeCore(fullType, false);
+            return MetalKnownTypes.GetMappedName(fullType)
+                .Replace(".", "_")
+                .Replace("+", "_");
         }
 
         protected void WriteStructure(StringBuilder sb, StructureDefinition sd)
@@ -37,7 +29,12 @@ namespace ShaderGen.Metal
             uint colorTarget = 0;
             foreach (FieldDefinition field in sd.Fields)
             {
-                string typeName = CSharpToShaderTypeCore(field.Type.Name, field.SemanticType == SemanticType.None);
+                string typeName = CSharpToShaderType(field.Type);
+                if (field.SemanticType == SemanticType.None)
+                {
+                    typeName = MetalKnownTypes.GetPackedName(typeName);
+                }
+
                 fb.Append(typeName);
                 fb.Append(' ');
                 fb.Append(CorrectIdentifier(field.Name.Trim()));
@@ -125,6 +122,7 @@ namespace ShaderGen.Metal
                             textureBinding++;
                             break;
                         case ShaderResourceKind.Sampler:
+                        case ShaderResourceKind.SamplerComparison:
                             if (resourcesUsed.Contains(rd))
                             {
                                 resourceArgList.Add(WriteSampler(rd, samplerBinding));
@@ -144,6 +142,27 @@ namespace ShaderGen.Metal
                                 resourceArgList.Add(WriteRWStructuredBuffer(rd, bufferBinding));
                             }
                             bufferBinding++;
+                            break;
+                        case ShaderResourceKind.RWTexture2D:
+                            if (resourcesUsed.Contains(rd))
+                            {
+                                resourceArgList.Add(WriteRWTexture2D(rd, textureBinding));
+                            }
+                            textureBinding++;
+                            break;
+                        case ShaderResourceKind.DepthTexture2D:
+                            if (resourcesUsed.Contains(rd))
+                            {
+                                resourceArgList.Add(WriteDepthTexture2D(rd, textureBinding));
+                            }
+                            textureBinding++;
+                            break;
+                        case ShaderResourceKind.DepthTexture2DArray:
+                            if (resourcesUsed.Contains(rd))
+                            {
+                                resourceArgList.Add(WriteDepthTexture2DArray(rd, textureBinding));
+                            }
+                            textureBinding++;
                             break;
                         default: throw new ShaderGenerationException("Illegal resource kind: " + rd.ResourceKind);
                     }
@@ -193,12 +212,26 @@ namespace ShaderGen.Metal
             return $"device {CSharpToShaderType(rd.ValueType.Name)} *{rd.Name} [[ buffer({binding}) ]]";
         }
 
+        private string WriteRWTexture2D(ResourceDefinition rd, int binding)
+        {
+            return $"texture2d<float, access::read_write> {rd.Name} [[ texture({binding}) ]]";
+        }
+
+        private string WriteDepthTexture2D(ResourceDefinition rd, int binding)
+        {
+            return $"depth2d<float> {rd.Name} [[ texture({binding}) ]]";
+        }
+
+        private string WriteDepthTexture2DArray(ResourceDefinition rd, int binding)
+        {
+            return $"depth2d_array<float> {rd.Name} [[ texture({binding}) ]]";
+        }
+
         protected override MethodProcessResult GenerateFullTextCore(string setName, ShaderFunction function)
         {
             Debug.Assert(function.IsEntryPoint);
 
             StringBuilder sb = new StringBuilder();
-            HashSet<ResourceDefinition> resourcesUsed = new HashSet<ResourceDefinition>();
             BackendContext setContext = GetContext(setName);
             ShaderFunctionAndMethodDeclarationSyntax entryPoint = setContext.Functions.SingleOrDefault(
                 sfabs => sfabs.Function.Name == function.Name);
@@ -221,26 +254,8 @@ namespace ShaderGen.Metal
                 WriteStructure(sb, sd);
             }
 
-            StringBuilder functionsSB = new StringBuilder();
-            foreach (ShaderFunctionAndMethodDeclarationSyntax f in entryPoint.OrderedFunctionList)
-            {
-                if (!f.Function.IsEntryPoint)
-                {
-                    MethodProcessResult processResult = new MetalMethodVisitor(Compilation, setName, f.Function, this).VisitFunction(f.MethodDeclaration);
-                    foreach (ResourceDefinition rd in processResult.ResourcesUsed)
-                    {
-                        resourcesUsed.Add(rd);
-                    }
-                    functionsSB.AppendLine(processResult.FullText);
-                }
-            }
-
-            MethodProcessResult entryResult = new MetalMethodVisitor(Compilation, setName, entryPoint.Function, this)
-                .VisitFunction(entryPoint.MethodDeclaration);
-            foreach (ResourceDefinition rd in entryResult.ResourcesUsed)
-            {
-                resourcesUsed.Add(rd);
-            }
+            HashSet<ResourceDefinition> resourcesUsed
+                = ProcessFunctions(setName, entryPoint, out string funcsStr, out string entryStr);
 
             StringBuilder containerSB = new StringBuilder();
             containerSB.AppendLine("struct ShaderContainer {");
@@ -261,7 +276,7 @@ namespace ShaderGen.Metal
                 containerSB.AppendLine(sf);
             }
 
-            containerSB.AppendLine(functionsSB.ToString());
+            containerSB.AppendLine(funcsStr);
 
             // Emit the ctor definition
             containerSB.AppendLine($"ShaderContainer(");
@@ -276,7 +291,7 @@ namespace ShaderGen.Metal
             }
             containerSB.AppendLine("{}");
 
-            containerSB.AppendLine(entryResult.FullText);
+            containerSB.AppendLine(entryStr);
 
             containerSB.AppendLine("};"); // Close the global containing struct.
             sb.AppendLine(containerSB.ToString());
@@ -331,7 +346,7 @@ namespace ShaderGen.Metal
 
         private string FormatParameter(ParameterDefinition pd)
         {
-            return $"{CSharpToShaderType(pd.Type.Name)} {CorrectIdentifier(pd.Name)} [[ stage_in ]]";
+            return $"{CSharpToShaderType(pd.Type)} {CorrectIdentifier(pd.Name)} [[ stage_in ]]";
         }
 
         public static List<(string Type, string Name, string Attribute)> GetBuiltinParameterList(ShaderFunction function)
@@ -374,6 +389,7 @@ namespace ShaderGen.Metal
                 case ShaderResourceKind.TextureCube:
                     return $"thread texturecube<float> {rd.Name};";
                 case ShaderResourceKind.Sampler:
+                case ShaderResourceKind.SamplerComparison:
                     return $"thread sampler {rd.Name};";
                 case ShaderResourceKind.Uniform:
                     return $"constant {CSharpToShaderType(rd.ValueType.Name)}& {rd.Name};";
@@ -381,6 +397,12 @@ namespace ShaderGen.Metal
                     return $"constant {CSharpToShaderType(rd.ValueType.Name)}* {rd.Name};";
                 case ShaderResourceKind.RWStructuredBuffer:
                     return $"device {CSharpToShaderType(rd.ValueType.Name)}* {rd.Name};";
+                case ShaderResourceKind.RWTexture2D:
+                    return $"texture2d<float, access::read_write> {rd.Name};";
+                case ShaderResourceKind.DepthTexture2D:
+                    return $"thread depth2d<float> {rd.Name};";
+                case ShaderResourceKind.DepthTexture2DArray:
+                    return $"thread depth2d_array<float> {rd.Name};";
                 default:
                     Debug.Fail("Invalid ResourceKind: " + rd.ResourceKind);
                     throw new InvalidOperationException();
@@ -400,6 +422,7 @@ namespace ShaderGen.Metal
                 case ShaderResourceKind.TextureCube:
                     return $"thread texturecube<float> {rd.Name}_param";
                 case ShaderResourceKind.Sampler:
+                case ShaderResourceKind.SamplerComparison:
                     return $"thread sampler {rd.Name}_param";
                 case ShaderResourceKind.Uniform:
                     return $"constant {CSharpToShaderType(rd.ValueType.Name)}& {rd.Name}_param";
@@ -407,9 +430,14 @@ namespace ShaderGen.Metal
                     return $"constant {CSharpToShaderType(rd.ValueType.Name)}* {rd.Name}_param";
                 case ShaderResourceKind.RWStructuredBuffer:
                     return $"device {CSharpToShaderType(rd.ValueType.Name)}* {rd.Name}_param";
+                case ShaderResourceKind.RWTexture2D:
+                    return $"texture2d<float, access::read_write> {rd.Name}_param";
+                case ShaderResourceKind.DepthTexture2D:
+                    return $"thread depth2d<float> {rd.Name}_param";
+                case ShaderResourceKind.DepthTexture2DArray:
+                    return $"thread depth2d_array<float> {rd.Name}_param";
                 default:
-                    Debug.Fail("Invalid ResourceKind: " + rd.ResourceKind);
-                    throw new InvalidOperationException();
+                    throw new InvalidOperationException("Invalid ResourceKind: " + rd.ResourceKind);
             }
         }
 
@@ -477,6 +505,11 @@ namespace ShaderGen.Metal
                 default:
                     return string.Empty;
             }
+        }
+
+        protected override ShaderMethodVisitor VisitShaderMethod(string setName, ShaderFunction func)
+        {
+            return new MetalMethodVisitor(Compilation, setName, func, this);
         }
     }
 }

@@ -27,6 +27,12 @@ namespace ShaderGen
             SamplerResource sampler,
             Vector2 texCoords,
             uint sampleIndex) => throw new ShaderBuiltinException();
+        public static T Load<T>(RWTexture2DResource<T> texture, UInt2 texCoords) where T : struct => throw new ShaderBuiltinException();
+        public static T Store<T>(RWTexture2DResource<T> texture, UInt2 texCoords, T value) where T : struct => throw new ShaderBuiltinException();
+        public static float SampleComparisonLevelZero(DepthTexture2DResource texture, SamplerComparisonResource sampler, Vector2 texCoords, float compareValue)
+            => throw new ShaderBuiltinException();
+        public static float SampleComparisonLevelZero(DepthTexture2DArrayResource texture, SamplerComparisonResource sampler, Vector2 texCoords, uint arrayLayer, float compareValue)
+            => throw new ShaderBuiltinException();
         public static void Discard() => throw new ShaderBuiltinException();
         public static Vector2 ClipToTextureCoordinates(Vector4 clipCoordinates) => throw new ShaderBuiltinException();
 
@@ -60,11 +66,29 @@ namespace ShaderGen
         public static Vector3 Ddx(Vector3 value) => throw new ShaderBuiltinException();
         public static Vector4 Ddx(Vector4 value) => throw new ShaderBuiltinException();
 
+        // DdxFine
+        public static float DdxFine(float value) => throw new ShaderBuiltinException();
+        public static Vector2 DdxFine(Vector2 value) => throw new ShaderBuiltinException();
+        public static Vector3 DdxFine(Vector3 value) => throw new ShaderBuiltinException();
+        public static Vector4 DdxFine(Vector4 value) => throw new ShaderBuiltinException();
+
         // Ddy
         public static float Ddy(float value) => throw new ShaderBuiltinException();
         public static Vector2 Ddy(Vector2 value) => throw new ShaderBuiltinException();
         public static Vector3 Ddy(Vector3 value) => throw new ShaderBuiltinException();
         public static Vector4 Ddy(Vector4 value) => throw new ShaderBuiltinException();
+
+        // DdyFine
+        public static float DdyFine(float value) => throw new ShaderBuiltinException();
+        public static Vector2 DdyFine(Vector2 value) => throw new ShaderBuiltinException();
+        public static Vector3 DdyFine(Vector3 value) => throw new ShaderBuiltinException();
+        public static Vector4 DdyFine(Vector4 value) => throw new ShaderBuiltinException();
+
+        // Floor
+        public static float Floor(float value) => throw new ShaderBuiltinException();
+        public static Vector2 Floor(Vector2 value) => throw new ShaderBuiltinException();
+        public static Vector3 Floor(Vector3 value) => throw new ShaderBuiltinException();
+        public static Vector4 Floor(Vector4 value) => throw new ShaderBuiltinException();
 
         // Frac
         public static float Frac(float value) => throw new ShaderBuiltinException();
@@ -101,6 +125,12 @@ namespace ShaderGen
         public static Vector2 Sin(Vector2 value) => throw new ShaderBuiltinException();
         public static Vector3 Sin(Vector3 value) => throw new ShaderBuiltinException();
         public static Vector4 Sin(Vector4 value) => throw new ShaderBuiltinException();
+
+        // SmoothStep
+        public static float SmoothStep(float min, float max, float x) => throw new ShaderBuiltinException();
+        public static Vector2 SmoothStep(Vector2 min, Vector2 max, Vector2 x) => throw new ShaderBuiltinException();
+        public static Vector3 SmoothStep(Vector3 min, Vector3 max, Vector3 x) => throw new ShaderBuiltinException();
+        public static Vector4 SmoothStep(Vector4 min, Vector4 max, Vector4 x) => throw new ShaderBuiltinException();
 
         // Tan
         public static float Tan(float value) => throw new ShaderBuiltinException();

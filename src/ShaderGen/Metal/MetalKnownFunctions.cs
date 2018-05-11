@@ -23,16 +23,22 @@ namespace ShaderGen.Metal
                 { "Acos", SimpleNameTranslator("acos") },
                 { "Cos", SimpleNameTranslator("cos") },
                 { "Ddx", SimpleNameTranslator("dfdx") },
+                { "DdxFine", SimpleNameTranslator("dfdx") },
                 { "Ddy", SimpleNameTranslator("dfdy") },
+                { "DdyFine", SimpleNameTranslator("dfdy") },
+                { "Floor", SimpleNameTranslator("floor") },
                 { "Frac", SimpleNameTranslator("fract") },
                 { "Lerp", SimpleNameTranslator("mix") },
                 { "Sin", SimpleNameTranslator("sin") },
+                { "SmoothStep", SimpleNameTranslator("smoothstep") },
                 { "Tan", SimpleNameTranslator("tan") },
                 { "Clamp", Clamp },
                 { "Mod", SimpleNameTranslator("fmod") },
                 { "Sample", Sample },
                 { "SampleGrad", SampleGrad },
+                { "SampleComparisonLevelZero", SampleComparisonLevelZero },
                 { "Load", Load },
+                { "Store", Store },
                 { "Discard", Discard },
                 { nameof(ShaderBuiltins.ClipToTextureCoordinates), ClipToTextureCoordinates },
                 { "VertexID", VertexID },
@@ -140,6 +146,13 @@ namespace ShaderGen.Metal
             };
             ret.Add("System.Numerics.Vector4", new DictionaryTypeInvocationTranslator(v4Mappings));
 
+            Dictionary<string, InvocationTranslator> u2Mappings = new Dictionary<string, InvocationTranslator>()
+            {
+                { "ctor", VectorCtor },
+            };
+            ret.Add("ShaderGen.UInt2", new DictionaryTypeInvocationTranslator(u2Mappings));
+            ret.Add("ShaderGen.Int2", new DictionaryTypeInvocationTranslator(u2Mappings));
+
             Dictionary<string, InvocationTranslator> m4x4Mappings = new Dictionary<string, InvocationTranslator>()
             {
                 { "ctor", MatrixCtor }
@@ -153,10 +166,18 @@ namespace ShaderGen.Metal
                 { "Min", SimpleNameTranslator("min") },
                 { "Pow", Pow },
                 { "Sin", SimpleNameTranslator("sin") },
+                { "Sqrt", SimpleNameTranslator("sqrt") },
             };
             ret.Add("System.MathF", new DictionaryTypeInvocationTranslator(mathfMappings));
 
             ret.Add("ShaderGen.ShaderSwizzle", new MetalSwizzleTranslator());
+
+            Dictionary<string, InvocationTranslator> vectorExtensionMappings = new Dictionary<string, InvocationTranslator>()
+            {
+                { nameof(VectorExtensions.GetComponent), VectorGetComponent },
+                { nameof(VectorExtensions.SetComponent), VectorSetComponent },
+            };
+            ret.Add("ShaderGen.VectorExtensions", new DictionaryTypeInvocationTranslator(vectorExtensionMappings));
 
             return ret;
         }
@@ -216,6 +237,16 @@ namespace ShaderGen.Metal
             return $"{{ {paramList} }}";
         }
 
+        private static string VectorGetComponent(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"{parameters[0].Identifier}[{parameters[1].Identifier}]";
+        }
+
+        private static string VectorSetComponent(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"{parameters[0].Identifier}[{parameters[1].Identifier}] = {parameters[2].Identifier}";
+        }
+
         public static string TranslateInvocation(string type, string method, InvocationParameterInfo[] parameters)
         {
             if (s_mappings.TryGetValue(type, out var dict))
@@ -271,9 +302,35 @@ namespace ShaderGen.Metal
             }
         }
 
+        private static string SampleComparisonLevelZero(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            if (parameters[0].FullTypeName == "ShaderGen.DepthTexture2DArrayResource")
+            {
+                // Metal texture array sample_compare function:
+                // sample_compare(sampler s, float2 coord, uint array, float compare_value)
+                return $"{parameters[0].Identifier}.sample_compare({parameters[1].Identifier}, {parameters[2].Identifier}, {parameters[3].Identifier}, {parameters[4].Identifier})";
+            }
+            else
+            {
+                return $"{parameters[0].Identifier}.sample_compare({parameters[1].Identifier}, {parameters[2].Identifier}, {parameters[3].Identifier})";
+            }
+        }
+
         private static string Load(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return $"{parameters[0].Identifier}.read(uint2({parameters[2].Identifier}.x, {parameters[2].Identifier}.y), {parameters[3].Identifier})";
+            if (parameters[0].FullTypeName.Contains("RWTexture2D"))
+            {
+                return $"{parameters[0].Identifier}.read({parameters[1].Identifier})";
+            }
+            else
+            {
+                return $"{parameters[0].Identifier}.read(uint2({parameters[2].Identifier}.x, {parameters[2].Identifier}.y), {parameters[3].Identifier})";
+            }
+        }
+
+        private static string Store(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"{parameters[0].Identifier}.write({parameters[2].Identifier}, {parameters[1].Identifier})";
         }
 
         private static string Discard(string typeName, string methodName, InvocationParameterInfo[] parameters)
@@ -424,6 +481,8 @@ namespace ShaderGen.Metal
             if (name == "System.Numerics.Vector2") { shaderType = "float2"; elementCount = 2; }
             else if (name == "System.Numerics.Vector3") { shaderType = "float3"; elementCount = 3; }
             else if (name == "System.Numerics.Vector4") { shaderType = "float4"; elementCount = 4; }
+            else if (name == "ShaderGen.Int2") { shaderType = "int2"; elementCount = 2; }
+            else if (name == "ShaderGen.UInt2") { shaderType = "uint2"; elementCount = 2; }
             else { throw new ShaderGenerationException("VectorCtor translator was called on an invalid type: " + name); }
         }
     }

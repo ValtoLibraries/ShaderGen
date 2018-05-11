@@ -6,6 +6,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 
 namespace ShaderGen
 {
@@ -68,8 +69,16 @@ namespace ShaderGen
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("{");
 
+            // Only declare discarded variables - i.e. MyFunc(out _) - for the top-level block in a function.
+            if (node.Parent.IsKind(SyntaxKind.MethodDeclaration))
+            {
+                sb.Append(DeclareDiscardedVariables(node));
+            }
+
             foreach (StatementSyntax ss in node.Statements)
             {
+                sb.Append(DeclareInlineOutVariables(ss));
+
                 string statementResult = Visit(ss);
                 if (string.IsNullOrEmpty(statementResult))
                 {
@@ -82,6 +91,81 @@ namespace ShaderGen
             }
 
             sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Declares any "discard"ed variables - i.e. MyFunc(out _) - for this block and all nested blocks.
+        /// </summary>
+        private string DeclareDiscardedVariables(BlockSyntax block)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            SemanticModel semanticModel = GetModel(block);
+
+            IEnumerable<ISymbol> discardedVariables = block
+                .DescendantNodes()
+                .Where(x => x.IsKind(SyntaxKind.IdentifierName))
+                .Select(x => semanticModel.GetSymbolInfo(x).Symbol)
+                .Where(x => x.Kind == SymbolKind.Discard)
+                .Cast<IDiscardSymbol>();
+
+            List<ISymbol> alreadyWrittenTypes = new List<ISymbol>();
+
+            foreach (IDiscardSymbol discardedVariable in discardedVariables)
+            {
+                if (alreadyWrittenTypes.Contains(discardedVariable.Type))
+                {
+                    continue;
+                }
+
+                sb.Append("    ");
+                sb.Append(GetDiscardedVariableType(discardedVariable));
+                sb.Append(' ');
+                sb.Append(GetDiscardedVariableName(discardedVariable));
+                sb.AppendLine(";");
+
+                alreadyWrittenTypes.Add(discardedVariable.Type);
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Check for any inline "out" variable declarations in this statement - i.e. MyFunc(out var result) - 
+        /// and declare those variables now.
+        /// </summary>
+        private string DeclareInlineOutVariables(StatementSyntax statement)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            IEnumerable<SyntaxNode> declarationExpressionNodes = statement
+                .DescendantNodes(x => !x.IsKind(SyntaxKind.Block)) // Don't descend into child blocks
+                .Where(x => x.IsKind(SyntaxKind.DeclarationExpression));
+
+            foreach (DeclarationExpressionSyntax declarationExpressionNode in declarationExpressionNodes)
+            {
+                string varType = _compilation.GetSemanticModel(declarationExpressionNode.Type.SyntaxTree).GetFullTypeName(declarationExpressionNode.Type);
+                string mappedType = _backend.CSharpToShaderType(varType);
+
+                sb.Append("    ");
+                sb.Append(mappedType);
+                sb.Append(' ');
+
+                switch (declarationExpressionNode.Designation)
+                {
+                    case SingleVariableDesignationSyntax svds:
+                        string identifier = _backend.CorrectIdentifier(svds.Identifier.Text);
+                        sb.Append(identifier);
+                        sb.Append(';');
+                        sb.AppendLine();
+                        break;
+
+                    default:
+                        throw new NotImplementedException($"{declarationExpressionNode.Designation.GetType()} designations are not implemented.");
+                }
+            }
+
             return sb.ToString();
         }
 
@@ -121,6 +205,11 @@ namespace ShaderGen
 
         public override string VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node)
         {
+            if (node.Modifiers.Any(x => x.IsKind(SyntaxKind.ConstKeyword)))
+            {
+                return " "; // TODO: Can't return empty string here because of validation check in VisitBlock
+            }
+
             return Visit(node.Declaration);
         }
 
@@ -152,10 +241,26 @@ namespace ShaderGen
             SymbolInfo exprSymbol = GetModel(node).GetSymbolInfo(node.Expression);
             if (exprSymbol.Symbol.Kind == SymbolKind.NamedType)
             {
-                // Static member access
                 SymbolInfo symbolInfo = GetModel(node).GetSymbolInfo(node);
                 ISymbol symbol = symbolInfo.Symbol;
-                if (symbol.Kind == SymbolKind.Property)
+
+                // Enum field
+                INamedTypeSymbol namedTypeSymbol = (INamedTypeSymbol)exprSymbol.Symbol;
+                if (namedTypeSymbol.TypeKind == TypeKind.Enum)
+                {
+                    IFieldSymbol enumFieldSymbol = (IFieldSymbol) symbol;
+                    string constantValueString = enumFieldSymbol.ConstantValue.ToString();
+                    if (namedTypeSymbol.EnumUnderlyingType.SpecialType == SpecialType.System_UInt32)
+                    {
+                        // TODO: We need to do this for literal values too, if they don't already have this suffix, 
+                        // so this should be refactored.
+                        constantValueString += "u";
+                    }
+                    return constantValueString;
+                }
+
+                // Static member access
+                if (symbol.Kind == SymbolKind.Property || symbol.Kind == SymbolKind.Field)
                 {
                     return Visit(node.Name);
                 }
@@ -208,7 +313,7 @@ namespace ShaderGen
 
                 if (type == "ShaderGen.ShaderBuiltins")
                 {
-                    ValidateBuiltInMethod(method);
+                    ProcessBuiltInMethodInvocation(method, node);
                 }
 
                 return _backend.FormatInvocation(_setName, type, method, parameterInfos);
@@ -269,14 +374,18 @@ namespace ShaderGen
             }
         }
 
-        private void ValidateBuiltInMethod(string name)
+        private void ProcessBuiltInMethodInvocation(string name, InvocationExpressionSyntax node)
         {
-            if (name == nameof(ShaderBuiltins.Ddx) || name == nameof(ShaderBuiltins.Ddy))
+            switch (name)
             {
-                if (_shaderFunction.Type == ShaderFunctionType.VertexEntryPoint || _shaderFunction.Type == ShaderFunctionType.ComputeEntryPoint)
-                {
-                    throw new ShaderGenerationException("Ddx and Ddy can only be used within Fragment shaders.");
-                }
+                case nameof(ShaderBuiltins.Ddx):
+                case nameof(ShaderBuiltins.Ddy):
+                case nameof(ShaderBuiltins.SampleComparisonLevelZero):
+                    if (_shaderFunction.Type == ShaderFunctionType.VertexEntryPoint || _shaderFunction.Type == ShaderFunctionType.ComputeEntryPoint)
+                    {
+                        throw new ShaderGenerationException($"{name} can only be used within Fragment shaders.");
+                    }
+                    break;
             }
         }
 
@@ -332,27 +441,56 @@ namespace ShaderGen
             return _backend.FormatInvocation(_setName, fullName, "ctor", parameters);
         }
 
+        private string GetDiscardedVariableType(ISymbol symbol)
+        {
+            Debug.Assert(symbol.Kind == SymbolKind.Discard);
+
+            string varType = Utilities.GetFullTypeName(((IDiscardSymbol) symbol).Type, out _);
+            return _backend.CSharpToShaderType(varType);
+        }
+
+        private string GetDiscardedVariableName(ISymbol symbol)
+        {
+            string mappedType = GetDiscardedVariableType(symbol);
+            return _backend.CorrectIdentifier($"_shadergen_discard_{mappedType}");
+        }
+
         public override string VisitIdentifierName(IdentifierNameSyntax node)
         {
             SymbolInfo symbolInfo = GetModel(node).GetSymbolInfo(node);
             ISymbol symbol = symbolInfo.Symbol;
-            string containingTypeName = Utilities.GetFullName(symbolInfo.Symbol.ContainingType);
+            if (symbol.Kind == SymbolKind.Discard)
+            {
+                return GetDiscardedVariableName(symbol);
+            }
+            string containingTypeName = Utilities.GetFullName(symbol.ContainingType);
             if (containingTypeName == "ShaderGen.ShaderBuiltins")
             {
                 TryRecognizeBuiltInVariable(symbolInfo);
             }
-            if (symbol.Kind == SymbolKind.Field && containingTypeName == _containingTypeName)
+            if (symbol is IFieldSymbol fs && fs.HasConstantValue)
+            {
+                // TODO: Share code to format constant values.
+                return string.Format(CultureInfo.InvariantCulture,"{0}", fs.ConstantValue);
+            }
+            else if (symbol.Kind == SymbolKind.Field && containingTypeName == _containingTypeName)
             {
                 string symbolName = symbol.Name;
                 ResourceDefinition referencedResource = _backend.GetContext(_setName).Resources.Single(rd => rd.Name == symbolName);
                 _resourcesUsed.Add(referencedResource);
-                _shaderFunction.UsesTexture2DMS |= referencedResource.ValueType.Name == "ShaderGen.Texture2DMSResource";
+                _shaderFunction.UsesTexture2DMS |= referencedResource.ResourceKind == ShaderResourceKind.Texture2DMS;
+                _shaderFunction.UsesStructuredBuffer |= referencedResource.ResourceKind == ShaderResourceKind.StructuredBuffer;
 
                 return _backend.CorrectFieldAccess(symbolInfo);
             }
             else if (symbol.Kind == SymbolKind.Property)
             {
                 return _backend.FormatInvocation(_setName, containingTypeName, symbol.Name, Array.Empty<InvocationParameterInfo>());
+            }
+            else if (symbol is ILocalSymbol ls && ls.HasConstantValue)
+            {
+                // TODO: Share code to format constant values.
+                return string.Format(CultureInfo.InvariantCulture, "{0}", ls.ConstantValue);
             }
 
             string mapped = _backend.CSharpToShaderIdentifierName(symbolInfo);
@@ -492,8 +630,9 @@ namespace ShaderGen
 
             StringBuilder sb = new StringBuilder();
 
-            string varType = _compilation.GetSemanticModel(node.Type.SyntaxTree).GetFullTypeName(node.Type);
-            string mappedType = _backend.CSharpToShaderType(varType);
+            SemanticModel semanticModel = _compilation.GetSemanticModel(node.Type.SyntaxTree);
+            string varType = semanticModel.GetFullTypeName(node.Type);
+            string mappedType = _backend.CSharpToShaderType(new TypeReference(varType, semanticModel.GetTypeInfo(node.Type)));
 
             sb.Append(mappedType);
             sb.Append(' ');
@@ -538,6 +677,25 @@ namespace ShaderGen
             return _backend.CorrectCastExpression(mappedType, Visit(node.Expression));
         }
 
+        public override string VisitDeclarationExpression(DeclarationExpressionSyntax node)
+        {
+            return Visit(node.Designation);
+        }
+
+        public override string VisitSingleVariableDesignation(SingleVariableDesignationSyntax node)
+        {
+            return _backend.CorrectIdentifier(node.Identifier.Text);
+        }
+
+        public override string VisitConditionalExpression(ConditionalExpressionSyntax node)
+        {
+            return Visit(node.Condition)
+                + node.QuestionToken.ToFullString()
+                + Visit(node.WhenTrue)
+                + node.ColonToken.ToFullString()
+                + Visit(node.WhenFalse);
+        }
+
         protected string GetParameterDeclList()
         {
             return string.Join(", ", _shaderFunction.Parameters.Select(FormatParameter));
@@ -545,7 +703,7 @@ namespace ShaderGen
 
         protected virtual string FormatParameter(ParameterDefinition pd)
         {
-            return $"{_backend.ParameterDirection(pd.Direction)} {_backend.CSharpToShaderType(pd.Type.Name)} {_backend.CorrectIdentifier(pd.Name)}";
+            return $"{_backend.ParameterDirection(pd.Direction)} {_backend.CSharpToShaderType(pd.Type)} {_backend.CorrectIdentifier(pd.Name)}";
         }
 
         private InvocationParameterInfo[] GetParameterInfos(ArgumentListSyntax argumentList)

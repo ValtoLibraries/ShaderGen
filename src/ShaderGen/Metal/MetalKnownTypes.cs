@@ -17,7 +17,10 @@ namespace ShaderGen.Metal
             { "ShaderGen.Texture2DResource", "texture2d<float>" },
             { "ShaderGen.Texture2DArrayResource", "texture2d_array<float>" },
             { "ShaderGen.TextureCubeResource", "texturecube<float>" },
+            { "ShaderGen.DepthTexture2DResource", "depth2d<float>" },
+            { "ShaderGen.DepthTexture2DArrayResource", "depth2d_array<float>" },
             { "ShaderGen.SamplerResource", "sampler" },
+            { "ShaderGen.SamplerComparisonResource", "sampler" },
             { "System.Boolean", "bool" },
             { "ShaderGen.UInt2", "uint2" },
             { "ShaderGen.UInt3", "uint3" },
@@ -65,9 +68,8 @@ namespace ShaderGen.Metal
             }
         }
 
-        public static string GetPackedName(string name)
+        public static string GetPackedName(string mappedName)
         {
-            string mappedName = GetMappedName(name);
             if (s_mappedToPackedTypes.TryGetValue(mappedName, out string packed))
             {
                 return packed;

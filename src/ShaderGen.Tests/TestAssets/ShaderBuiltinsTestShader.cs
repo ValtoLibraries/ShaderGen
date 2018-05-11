@@ -50,6 +50,12 @@ namespace TestShaders
             r3 = Cos(VH.V3);
             r4 = Cos(VH.V4);
 
+            // Floor
+            r = Floor(f);
+            r2 = Floor(VH.V2);
+            r3 = Floor(VH.V3);
+            r4 = Floor(VH.V4);
+
             // Frac
             r = Frac(f);
             r2 = Frac(VH.V2);
@@ -79,6 +85,12 @@ namespace TestShaders
             r2 = Sin(VH.V2);
             r3 = Sin(VH.V3);
             r4 = Sin(VH.V4);
+
+            // SmoothStep
+            r = SmoothStep(1f, 2f, f);
+            r2 = SmoothStep(new Vector2(1f, 1f), new Vector2(2f, 2f), VH.V2);
+            r3 = SmoothStep(new Vector3(1f, 1f, 1f), new Vector3(2f, 2f, 2f), VH.V3);
+            r4 = SmoothStep(new Vector4(1f, 1f, 1f, 1f), new Vector4(2f, 2f, 2f, 2f), VH.V4);
 
             // Tan
             r = Tan(f);
@@ -118,11 +130,23 @@ namespace TestShaders
             Vector3 r3 = Ddx(ret.XYZ());
             Vector4 r4 = Ddx(ret);
 
+            // DdxFine
+            r = DdxFine(ret.X);
+            r2 = DdxFine(ret.XY());
+            r3 = DdxFine(ret.XYZ());
+            r4 = DdxFine(ret);
+
             // Ddy
             r = Ddy(ret.X);
             r2 = Ddy(ret.XY());
             r3 = Ddy(ret.XYZ());
             r4 = Ddy(ret);
+
+            // DdyFine
+            r = DdyFine(ret.X);
+            r2 = DdyFine(ret.XY());
+            r3 = DdyFine(ret.XYZ());
+            r4 = DdyFine(ret);
 
             return ret;
         }

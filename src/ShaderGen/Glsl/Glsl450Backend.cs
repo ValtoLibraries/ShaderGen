@@ -53,6 +53,15 @@ namespace ShaderGen.Glsl
             sb.AppendLine(";");
         }
 
+        protected override void WriteSamplerComparison(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.Append(FormatLayoutStr(rd));
+            sb.Append(' ');
+            sb.Append("uniform samplerShadow ");
+            sb.Append(CorrectIdentifier(rd.Name));
+            sb.AppendLine(";");
+        }
+
         protected override void WriteTexture2D(StringBuilder sb, ResourceDefinition rd)
         {
             sb.Append(FormatLayoutStr(rd));
@@ -89,6 +98,16 @@ namespace ShaderGen.Glsl
             sb.AppendLine(";");
         }
 
+        protected override void WriteDepthTexture2D(StringBuilder sb, ResourceDefinition rd)
+        {
+            WriteTexture2D(sb, rd);
+        }
+
+        protected override void WriteDepthTexture2DArray(StringBuilder sb, ResourceDefinition rd)
+        {
+            WriteTexture2DArray(sb, rd);
+        }
+
         protected override void WriteInOutVariable(
             StringBuilder sb,
             bool isInVar,
@@ -110,6 +129,17 @@ namespace ShaderGen.Glsl
             }
             sb.AppendLine($"layout(location = {index}) {qualifier} {normalizedType} {identifier};");
 
+        }
+
+        protected override void WriteRWTexture2D(StringBuilder sb, ResourceDefinition rd)
+        {
+            string layoutType = "rgba32f"; // TODO: Support other types ?
+            sb.Append(FormatLayoutStr(rd, layoutType));
+            sb.Append(' ');
+            sb.Append("uniform image2D ");
+            sb.Append(CorrectIdentifier(rd.Name));
+            sb.AppendLine(";");
+            sb.AppendLine();
         }
 
         protected override string FormatInvocationCore(string setName, string type, string method, InvocationParameterInfo[] parameterInfos)

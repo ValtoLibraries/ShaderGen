@@ -21,17 +21,23 @@ namespace ShaderGen.Glsl
                 { "Acos", SimpleNameTranslator("acos") },
                 { "Cos", SimpleNameTranslator("cos") },
                 { "Ddx", SimpleNameTranslator("dFdx") },
+                { "DdxFine", SimpleNameTranslator("dFdx") },
                 { "Ddy", SimpleNameTranslator("dFdy") },
+                { "DdyFine", SimpleNameTranslator("dFdy") },
+                { "Floor", SimpleNameTranslator("floor") },
                 { "Frac", SimpleNameTranslator("fract") },
                 { "Lerp", SimpleNameTranslator("mix") },
                 { "Sin", SimpleNameTranslator("sin") },
+                { "SmoothStep", SimpleNameTranslator("smoothstep") },
                 { "Tan", SimpleNameTranslator("tan") },
                 { "Clamp", SimpleNameTranslator("clamp") },
                 { "Mod", SimpleNameTranslator("mod") },
                 { "Mul", MatrixMul },
                 { "Sample", Sample },
                 { "SampleGrad", SampleGrad },
+                { "SampleComparisonLevelZero", SampleComparisonLevelZero },
                 { "Load", Load },
+                { "Store", Store },
                 { "Discard", Discard },
                 { "Saturate", Saturate },
                 { nameof(ShaderBuiltins.ClipToTextureCoordinates), ClipToTextureCoordinates },
@@ -140,6 +146,13 @@ namespace ShaderGen.Glsl
             };
             ret.Add("System.Numerics.Vector4", new DictionaryTypeInvocationTranslator(v4Mappings));
 
+            Dictionary<string, InvocationTranslator> u2Mappings = new Dictionary<string, InvocationTranslator>()
+            {
+                { "ctor", VectorCtor },
+            };
+            ret.Add("ShaderGen.UInt2", new DictionaryTypeInvocationTranslator(u2Mappings));
+            ret.Add("ShaderGen.Int2", new DictionaryTypeInvocationTranslator(u2Mappings));
+
             Dictionary<string, InvocationTranslator> m4x4Mappings = new Dictionary<string, InvocationTranslator>()
             {
                 { "ctor", MatrixCtor }
@@ -153,10 +166,18 @@ namespace ShaderGen.Glsl
                 { "Min", SimpleNameTranslator("min") },
                 { "Pow", SimpleNameTranslator("pow") },
                 { "Sin", SimpleNameTranslator("sin") },
+                { "Sqrt", SimpleNameTranslator("sqrt") },
             };
             ret.Add("System.MathF", new DictionaryTypeInvocationTranslator(mathfMappings));
 
             ret.Add("ShaderGen.ShaderSwizzle", new SwizzleTranslator());
+
+            Dictionary<string, InvocationTranslator> vectorExtensionMappings = new Dictionary<string, InvocationTranslator>()
+            {
+                { nameof(VectorExtensions.GetComponent), VectorGetComponent },
+                { nameof(VectorExtensions.SetComponent), VectorSetComponent },
+            };
+            ret.Add("ShaderGen.VectorExtensions", new DictionaryTypeInvocationTranslator(vectorExtensionMappings));
 
             return ret;
         }
@@ -170,6 +191,16 @@ namespace ShaderGen.Glsl
                 p[3].Identifier, p[7].Identifier, p[11].Identifier, p[15].Identifier);
 
             return $"mat4({paramList})";
+        }
+
+        private static string VectorGetComponent(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"{parameters[0].Identifier}[{parameters[1].Identifier}]";
+        }
+
+        private static string VectorSetComponent(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"{parameters[0].Identifier}[{parameters[1].Identifier}] = {parameters[2].Identifier}";
         }
 
         public static string TranslateInvocation(string type, string method, InvocationParameterInfo[] parameters)
@@ -245,9 +276,33 @@ namespace ShaderGen.Glsl
             }
         }
 
+        private static string SampleComparisonLevelZero(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            if (parameters[0].FullTypeName == "ShaderGen.DepthTexture2DArrayResource")
+            {
+                return $"textureGrad({parameters[0].Identifier}, vec4({parameters[2].Identifier}, {parameters[3].Identifier}, {parameters[4].Identifier}), vec2(0.0), vec2(0.0))";
+            }
+            else
+            {
+                return $"textureLod({parameters[0].Identifier}, vec3({parameters[2].Identifier}, {parameters[3].Identifier}), 0.0)";
+            }
+        }
+
         private static string Load(string typeName, string methodName, InvocationParameterInfo[] parameters)
         {
-            return $"texelFetch({parameters[0].Identifier}, ivec2({parameters[2].Identifier}), {parameters[3].Identifier})";
+            if (parameters[0].FullTypeName.Contains("RWTexture2D"))
+            {
+                return $"imageLoad({parameters[0].Identifier}, ivec2({parameters[1].Identifier}))";
+            }
+            else
+            {
+                return $"texelFetch({parameters[0].Identifier}, ivec2({parameters[2].Identifier}), {parameters[3].Identifier})";
+            }
+        }
+
+        private static string Store(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"imageStore({parameters[0].Identifier}, ivec2({parameters[1].Identifier}), {parameters[2].Identifier})";
         }
 
         private static string Discard(string typeName, string methodName, InvocationParameterInfo[] parameters)
@@ -410,6 +465,8 @@ namespace ShaderGen.Glsl
             if (name == "System.Numerics.Vector2") { shaderType = "vec2"; elementCount = 2; }
             else if (name == "System.Numerics.Vector3") { shaderType = "vec3"; elementCount = 3; }
             else if (name == "System.Numerics.Vector4") { shaderType = "vec4"; elementCount = 4; }
+            else if (name == "ShaderGen.Int2") { shaderType = "ivec2"; elementCount = 2; }
+            else if (name == "ShaderGen.UInt2") { shaderType = "uvec2"; elementCount = 2; }
             else { throw new ShaderGenerationException("VectorCtor translator was called on an invalid type: " + name); }
         }
     }
